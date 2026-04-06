@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
+import DatePicker, { registerLocale } from 'react-datepicker';
+import { format } from 'date-fns';
+import { id as localeId } from 'date-fns/locale/id';
 import { Eye, FileDown, Pencil, Plus, ShoppingCart, Trash2 } from 'lucide-react';
 import Select from 'react-select';
+
+registerLocale('id', localeId);
 import { api, apiCall, toastApiError } from '../utils/api.js';
 import { confirmAction } from '../utils/confirm.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -60,8 +65,8 @@ export default function OrdersPage() {
   const search = useDebouncedValue(searchInput, 1000);
   const [page, setPage] = useState(1);
   const [storeId, setStoreId] = useState(null);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(null);
+  const [dateTo, setDateTo] = useState(null);
   const [payout, setPayout] = useState('');
   const [status, setStatus] = useState('');
   const [stores, setStores] = useState([]);
@@ -84,8 +89,8 @@ export default function OrdersPage() {
         search,
       });
       if (storeId) params.set('store_id', storeId);
-      if (dateFrom) params.set('date_from', dateFrom);
-      if (dateTo) params.set('date_to', dateTo);
+      if (dateFrom) params.set('date_from', format(dateFrom, 'yyyy-MM-dd'));
+      if (dateTo) params.set('date_to', format(dateTo, 'yyyy-MM-dd'));
       if (payout) params.set('payout', payout);
       if (status) params.set('status', status);
       const { data } = await api.get(`/api/orders?${params}`);
@@ -147,8 +152,8 @@ export default function OrdersPage() {
   async function handleExport() {
     const params = new URLSearchParams({ search });
     if (storeId) params.set('store_id', storeId);
-    if (dateFrom) params.set('date_from', dateFrom);
-    if (dateTo) params.set('date_to', dateTo);
+    if (dateFrom) params.set('date_from', format(dateFrom, 'yyyy-MM-dd'));
+    if (dateTo) params.set('date_to', format(dateTo, 'yyyy-MM-dd'));
     if (payout) params.set('payout', payout);
     try {
       const { data } = await api.get(`/api/orders/export?${params}`);
@@ -243,12 +248,46 @@ export default function OrdersPage() {
             </div>
             <div className="form-row cols-2">
               <div>
-                <label>Dari</label>
-                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                <label htmlFor="orders-date-from">Dari</label>
+                <DatePicker
+                  id="orders-date-from"
+                  locale="id"
+                  selected={dateFrom}
+                  onChange={(d) => setDateFrom(d)}
+                  dateFormat="dd/MM/yyyy"
+                  placeholderText="Tanggal mulai"
+                  isClearable
+                  showMonthDropdown
+                  showYearDropdown
+                  dropdownMode="select"
+                  maxDate={dateTo ?? undefined}
+                  className="field-input w-full"
+                  wrapperClassName="w-full"
+                  popperClassName="datepicker-popper-z"
+                  showPopperArrow={false}
+                  autoComplete="off"
+                />
               </div>
               <div>
-                <label>Sampai</label>
-                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+                <label htmlFor="orders-date-to">Sampai</label>
+                <DatePicker
+                  id="orders-date-to"
+                  locale="id"
+                  selected={dateTo}
+                  onChange={(d) => setDateTo(d)}
+                  dateFormat="dd/MM/yyyy"
+                  placeholderText="Tanggal akhir"
+                  isClearable
+                  showMonthDropdown
+                  showYearDropdown
+                  dropdownMode="select"
+                  minDate={dateFrom ?? undefined}
+                  className="field-input w-full"
+                  wrapperClassName="w-full"
+                  popperClassName="datepicker-popper-z"
+                  showPopperArrow={false}
+                  autoComplete="off"
+                />
               </div>
             </div>
           </div>
@@ -260,10 +299,10 @@ export default function OrdersPage() {
           <thead>
             <tr>
               <th>Pesanan</th>
-              <th>Qty</th>
-              <th>Toko</th>
-              <th>Tgl</th>
-              <th>Status order</th>
+              <th className="text-center align-middle">Qty</th>
+              <th className="text-center align-middle">Toko</th>
+              <th className="text-center align-middle">Tgl</th>
+              <th className="text-center align-middle">Status order</th>
               <th>Pencairan</th>
               <th>Total modal</th>
               <th>Laba</th>
@@ -282,10 +321,10 @@ export default function OrdersPage() {
                   <div className="font-semibold text-slate-900">{o.order_no}</div>
                   <div className="muted text-xs">{o.resi || '—'}</div>
                 </td>
-                <td className="tabular-nums align-top">{o.qty_sum}</td>
-                <td className="align-top">{o.store_name}</td>
-                <td className="align-top">{formatDate(o.order_date)}</td>
-                <td className="align-top">
+                <td className="tabular-nums align-middle text-center">{o.qty_sum}</td>
+                <td className="align-middle text-center">{o.store_name}</td>
+                <td className="align-middle text-center">{formatDate(o.order_date)}</td>
+                <td className="align-middle text-center">
                   <OrderStatusBadge status={o.status} />
                 </td>
                 <td>

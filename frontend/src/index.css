@@ -1,0 +1,169 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply min-h-dvh bg-slate-50 font-sans text-slate-900 antialiased;
+  }
+  #root {
+    @apply min-h-dvh;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex min-h-[44px] shrink-0 items-center justify-center gap-1.5 rounded-lg px-4 text-sm font-semibold transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn svg {
+    @apply shrink-0 opacity-95;
+  }
+  .btn-primary {
+    @apply bg-blue-600 text-white shadow-sm hover:bg-blue-700 hover:shadow-md;
+  }
+  .btn-ghost {
+    @apply border border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900;
+  }
+  .btn-danger {
+    @apply border border-red-200 bg-red-50 text-red-600 hover:border-red-300 hover:bg-red-100;
+  }
+  .btn-icon {
+    @apply h-10 min-h-0 w-10 p-0;
+  }
+
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white p-4 shadow-sm;
+  }
+
+  label {
+    @apply mb-1 block text-xs font-medium text-slate-500;
+  }
+  .field-input,
+  input:not([type='file']):not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20;
+  }
+
+  .form-row {
+    @apply grid grid-cols-1 gap-3;
+  }
+  @screen sm {
+    .form-row.cols-2 {
+      @apply grid-cols-2;
+    }
+  }
+
+  .page-title-row {
+    @apply mb-4 flex flex-wrap items-center gap-2;
+  }
+  .page-title {
+    @apply mb-4 text-2xl font-bold tracking-tight text-slate-900;
+  }
+  .page-title-row .page-title {
+    @apply mb-0 flex-1;
+  }
+
+  .muted {
+    @apply text-sm text-slate-500;
+  }
+
+  .icon-title {
+    @apply shrink-0 text-blue-600;
+  }
+
+  .table-wrap {
+    @apply overflow-x-auto;
+  }
+  .table-app {
+    @apply w-full border-collapse text-sm;
+  }
+  .table-app th {
+    @apply whitespace-nowrap bg-slate-100 px-2 py-2.5 text-left font-semibold text-slate-500;
+  }
+  .table-app td {
+    @apply border-b border-slate-200 px-2 py-2.5;
+  }
+  .table-app tbody tr:hover {
+    @apply bg-slate-50/80;
+  }
+
+  .pagination {
+    @apply mt-4 flex flex-wrap items-center gap-2;
+  }
+  .pagination button {
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-900 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .grid-stats {
+    @apply mb-4 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3;
+  }
+  .stat {
+    @apply flex flex-col gap-1.5 rounded-xl border border-slate-200 bg-white p-4 shadow-sm;
+  }
+  .stat-icon {
+    @apply flex h-10 w-10 items-center justify-center rounded-lg;
+  }
+  .stat-label {
+    @apply text-xs font-medium text-slate-500;
+  }
+  .stat strong {
+    @apply m-0 text-lg font-bold text-slate-900;
+  }
+
+  .login-page {
+    @apply grid min-h-dvh place-items-center bg-gradient-to-br from-white via-slate-50 to-indigo-50 p-4;
+  }
+}
+
+/* react-datepicker — selaras tema & di atas modal/nav */
+.datepicker-popper-z {
+  z-index: 100 !important;
+}
+
+.react-datepicker {
+  @apply rounded-xl border border-slate-200 font-sans shadow-xl;
+}
+
+.react-datepicker__header {
+  @apply rounded-t-[0.65rem] border-b border-slate-200 bg-slate-50;
+}
+
+.react-datepicker__current-month,
+.react-datepicker-time__header {
+  @apply text-sm font-semibold text-slate-900;
+}
+
+.react-datepicker__day-name {
+  @apply text-xs text-slate-500;
+}
+
+.react-datepicker__day:hover {
+  @apply rounded-md bg-slate-100;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--keyboard-selected:not(
+    .react-datepicker__day--outside-month
+  ) {
+  @apply rounded-md bg-blue-600 text-white hover:bg-blue-700;
+}
+
+.react-datepicker__day--today {
+  @apply font-semibold text-blue-600;
+}
+
+.react-datepicker__day--outside-month {
+  @apply text-slate-300;
+}
+
+.react-datepicker__navigation-icon::before {
+  @apply border-slate-600;
+}
+
+.react-datepicker__triangle {
+  @apply hidden;
+}

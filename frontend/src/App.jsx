@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import OrdersPage from './pages/OrdersPage.jsx';
 import ProductsPage from './pages/ProductsPage.jsx';
+import StockInHistoryPage from './pages/StockInHistoryPage.jsx';
 import StoresPage from './pages/StoresPage.jsx';
 import UsersPage from './pages/UsersPage.jsx';
 
@@ -38,6 +39,7 @@ export default function App() {
         <Route index element={<DashboardPage />} />
         <Route path="orders" element={<OrdersPage />} />
         <Route path="products" element={<ProductsPage />} />
+        <Route path="stock-history" element={<StockInHistoryPage />} />
         <Route path="stores" element={<StoresPage />} />
         <Route path="users" element={<UsersPage />} />
       </Route>

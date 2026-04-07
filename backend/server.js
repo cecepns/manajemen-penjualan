@@ -278,6 +278,41 @@ app.get('/api/products/:id/stock-in-history', authRequired, async (req, res) => 
   }
 });
 
+app.get('/api/stock-in-history', authRequired, async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search = '' } = req.query;
+    const { page: p, limit: l, offset } = paginate(page, limit);
+    const q = `%${String(search).trim()}%`;
+
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS c
+       FROM stock_in_history h
+       JOIN products p ON p.id = h.product_id
+       LEFT JOIN users u ON u.id = h.created_by
+       WHERE p.name LIKE ? OR IFNULL(p.barcode,'') LIKE ? OR IFNULL(h.notes,'') LIKE ? OR IFNULL(u.name,'') LIKE ?`,
+      [q, q, q, q]
+    );
+    const total = countRows[0].c;
+
+    const [rows] = await pool.query(
+      `SELECT h.id, h.product_id, h.qty_before, h.qty_added, h.qty_after, h.notes, h.created_at,
+              p.name AS product_name, p.barcode AS product_barcode, u.name AS created_by_name
+       FROM stock_in_history h
+       JOIN products p ON p.id = h.product_id
+       LEFT JOIN users u ON u.id = h.created_by
+       WHERE p.name LIKE ? OR IFNULL(p.barcode,'') LIKE ? OR IFNULL(h.notes,'') LIKE ? OR IFNULL(u.name,'') LIKE ?
+       ORDER BY h.id DESC
+       LIMIT ? OFFSET ?`,
+      [q, q, q, q, l, offset]
+    );
+
+    res.json({ data: rows, page: p, limit: l, total });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat histori stok masuk' });
+  }
+});
+
 app.post('/api/products', authRequired, async (req, res) => {
   try {
     const { name, barcode, hpp, stock } = req.body || {};

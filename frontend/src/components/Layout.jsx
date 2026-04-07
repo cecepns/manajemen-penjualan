@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
+  History,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -16,6 +17,7 @@ const links = [
   { to: '/', label: 'Dashboard', end: true, Icon: LayoutDashboard },
   { to: '/orders', label: 'Order', Icon: ShoppingCart },
   { to: '/products', label: 'Produk', Icon: Package },
+  { to: '/stock-history', label: 'History stok', Icon: History },
   { to: '/stores', label: 'Toko', Icon: Store },
   { to: '/users', label: 'User', admin: true, Icon: Users },
 ];

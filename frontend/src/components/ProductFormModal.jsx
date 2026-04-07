@@ -16,7 +16,6 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
   const [loading, setLoading] = useState(false);
   const [stockInQty, setStockInQty] = useState('');
   const [stockInNotes, setStockInNotes] = useState('');
-  const [stockHistory, setStockHistory] = useState([]);
 
   useEffect(() => {
     if (!open) return;
@@ -24,7 +23,6 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
       setForm(empty);
       setStockInQty('');
       setStockInNotes('');
-      setStockHistory([]);
       return;
     }
     setLoading(true);
@@ -37,10 +35,6 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
           hpp: String(p.hpp),
           stock: p.stock,
         });
-        return api.get(`/api/products/${productId}/stock-in-history`);
-      })
-      .then(({ data }) => {
-        setStockHistory(Array.isArray(data) ? data : []);
       })
       .catch(() => {
         toastApiError(new Error('Produk tidak ada'));
@@ -143,46 +137,6 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
               </>
             )}
           </div>
-          {isEdit && (
-            <div className="mt-4 rounded-lg border border-slate-200">
-              <div className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900">
-                History stok masuk
-              </div>
-              <div className="max-h-56 overflow-auto">
-                <table className="table-app">
-                  <thead>
-                    <tr>
-                      <th>Tanggal</th>
-                      <th>Masuk</th>
-                      <th>Stok awal</th>
-                      <th>Stok akhir</th>
-                      <th>Oleh</th>
-                      <th>Catatan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stockHistory.map((h) => (
-                      <tr key={h.id}>
-                        <td>{new Date(h.created_at).toLocaleString('id-ID')}</td>
-                        <td>{h.qty_added}</td>
-                        <td>{h.qty_before}</td>
-                        <td>{h.qty_after}</td>
-                        <td>{h.created_by_name || '—'}</td>
-                        <td>{h.notes || '—'}</td>
-                      </tr>
-                    ))}
-                    {!stockHistory.length && (
-                      <tr>
-                        <td colSpan={6} className="muted">
-                          Belum ada histori stok masuk
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
           <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
             <button type="submit" className="btn btn-primary">
               <Save size={18} strokeWidth={2} aria-hidden />

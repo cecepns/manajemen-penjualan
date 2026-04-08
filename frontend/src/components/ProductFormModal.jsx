@@ -14,15 +14,10 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
   const isEdit = productId != null;
   const [form, setForm] = useState(empty);
   const [loading, setLoading] = useState(false);
-  const [stockInQty, setStockInQty] = useState('');
-  const [stockInNotes, setStockInNotes] = useState('');
-
   useEffect(() => {
     if (!open) return;
     if (!isEdit) {
       setForm(empty);
-      setStockInQty('');
-      setStockInNotes('');
       return;
     }
     setLoading(true);
@@ -50,8 +45,6 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
       barcode: form.barcode.trim() || null,
       hpp: Number(form.hpp) || 0,
       stock: Number(form.stock) || 0,
-      stock_in: isEdit ? Number(stockInQty) || 0 : 0,
-      stock_in_notes: isEdit ? stockInNotes.trim() || null : null,
     };
     try {
       if (isEdit) {
@@ -66,8 +59,6 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
         });
       }
       onSaved?.();
-      setStockInQty('');
-      setStockInNotes('');
       onClose();
     } catch {
       /* toast */
@@ -112,30 +103,12 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
                 onChange={(e) => setForm((f) => ({ ...f, stock: e.target.value }))}
                 disabled={isEdit}
               />
-              {isEdit && <p className="muted mt-1 text-xs">Untuk produk existing, gunakan &quot;Tambah stok masuk&quot;.</p>}
+              {isEdit && (
+                <p className="muted mt-1 text-xs">
+                  Tambah stok masuk lewat menu <strong className="font-medium text-slate-600">Tambah stok masuk</strong> di sidebar.
+                </p>
+              )}
             </div>
-            {isEdit && (
-              <>
-                <div>
-                  <label>Tambah stok masuk</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={stockInQty}
-                    onChange={(e) => setStockInQty(e.target.value)}
-                    placeholder="Contoh: 10"
-                  />
-                </div>
-                <div>
-                  <label>Catatan stok masuk</label>
-                  <input
-                    value={stockInNotes}
-                    onChange={(e) => setStockInNotes(e.target.value)}
-                    placeholder="Opsional"
-                  />
-                </div>
-              </>
-            )}
           </div>
           <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
             <button type="submit" className="btn btn-primary">

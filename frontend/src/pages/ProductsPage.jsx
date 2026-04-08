@@ -8,6 +8,8 @@ import PaginationBar from '../components/PaginationBar.jsx';
 import ProductFormModal from '../components/ProductFormModal.jsx';
 
 const LIMIT = 10;
+/** Stok di atas 0 dan di bawah ambang ini ditandai kuning (hampir habis). */
+const LOW_STOCK_MAX = 5;
 
 function formatMoney(n) {
   return new Intl.NumberFormat('id-ID', {
@@ -15,6 +17,15 @@ function formatMoney(n) {
     currency: 'IDR',
     maximumFractionDigits: 0,
   }).format(Number(n) || 0);
+}
+
+function stockCellClass(stock) {
+  const s = Number(stock) || 0;
+  if (s <= 0)
+    return 'inline-flex min-w-[2.25rem] justify-center rounded-md bg-red-100 px-2 py-0.5 font-semibold tabular-nums text-red-800';
+  if (s <= LOW_STOCK_MAX)
+    return 'inline-flex min-w-[2.25rem] justify-center rounded-md bg-amber-100 px-2 py-0.5 font-semibold tabular-nums text-amber-900';
+  return 'tabular-nums font-medium text-slate-900';
 }
 
 export default function ProductsPage() {
@@ -26,21 +37,24 @@ export default function ProductsPage() {
   const [total, setTotal] = useState(0);
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [productEditingId, setProductEditingId] = useState(null);
+  /** '' = terbaru diubah; 'asc' | 'desc' = urut stok */
+  const [stockSort, setStockSort] = useState('');
 
   const fetchProducts = useCallback(
     async (pageOverride) => {
       const p = pageOverride ?? page;
       const params = { page: p, limit: LIMIT, search };
+      if (stockSort === 'asc' || stockSort === 'desc') params.sort_stock = stockSort;
       const { data } = await api.get('/api/products', { params });
       setRows(data.data);
       setTotal(data.total);
     },
-    [page, search]
+    [page, search, stockSort]
   );
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, stockSort]);
 
   useEffect(() => {
     fetchProducts().catch((e) => toastApiError(e));
@@ -93,9 +107,23 @@ export default function ProductsPage() {
       </div>
 
       <div className="card mb-4">
-        <div>
-          <label>Cari nama / barcode </label>
-          <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Ketik…" />
+        <div className="form-row cols-2">
+          <div>
+            <label>Cari nama / barcode </label>
+            <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Ketik…" />
+          </div>
+          <div>
+            <label>Urutkan stok</label>
+            <select
+              value={stockSort}
+              onChange={(e) => setStockSort(e.target.value)}
+              aria-label="Urutkan berdasarkan stok"
+            >
+              <option value="">Terbaru diubah (default)</option>
+              <option value="asc">Stok terendah dulu</option>
+              <option value="desc">Stok tertinggi dulu</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -124,7 +152,9 @@ export default function ProductsPage() {
                 </td>
                 <td className="muted">{p.barcode || '—'}</td>
                 <td>{formatMoney(p.hpp)}</td>
-                <td>{p.stock}</td>
+                <td>
+                  <span className={stockCellClass(p.stock)}>{Number(p.stock) || 0}</span>
+                </td>
                 <td>
                   <div className="flex flex-wrap gap-1">
                     <button

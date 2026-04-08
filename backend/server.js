@@ -217,7 +217,7 @@ app.get('/api/stores/all', authRequired, async (_req, res) => {
 /* ——— Products ——— */
 app.get('/api/products', authRequired, async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '' } = req.query;
+    const { page = 1, limit = 10, search = '', sort_stock } = req.query;
     const { page: p, limit: l, offset } = paginate(page, limit);
     const q = `%${String(search).trim()}%`;
     const where = '(p.name LIKE ? OR IFNULL(p.barcode,"") LIKE ?)';
@@ -227,10 +227,13 @@ app.get('/api/products', authRequired, async (req, res) => {
       params
     );
     const total = countRows[0].c;
+    let orderSql = 'ORDER BY p.updated_at DESC';
+    if (sort_stock === 'asc') orderSql = 'ORDER BY p.stock ASC, p.updated_at DESC';
+    else if (sort_stock === 'desc') orderSql = 'ORDER BY p.stock DESC, p.updated_at DESC';
     const [rows] = await pool.query(
       `SELECT p.* FROM products p
        WHERE ${where}
-       ORDER BY p.updated_at DESC LIMIT ? OFFSET ?`,
+       ${orderSql} LIMIT ? OFFSET ?`,
       [...params, l, offset]
     );
     res.json({ data: rows, page: p, limit: l, total });
@@ -257,6 +260,162 @@ app.get('/api/products/:id', authRequired, async (req, res) => {
   ]);
   if (!rows[0]) return res.status(404).json({ message: 'Tidak ada' });
   res.json(rows[0]);
+});
+
+app.post('/api/products/:id/stock-in', authRequired, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { qty, notes } = req.body || {};
+    const added = Number(qty) || 0;
+    if (!Number.isFinite(added) || added <= 0)
+      return res.status(400).json({ message: 'Jumlah stok masuk harus lebih dari 0' });
+
+    await conn.beginTransaction();
+    const [prows] = await conn.query(
+      'SELECT id, stock FROM products WHERE id = ? FOR UPDATE',
+      [req.params.id]
+    );
+    const current = prows[0];
+    if (!current) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Produk tidak ada' });
+    }
+    const before = Number(current.stock) || 0;
+    const after = before + added;
+
+    await conn.query('UPDATE products SET stock = ? WHERE id = ?', [after, req.params.id]);
+    await conn.query(
+      `INSERT INTO stock_in_history
+        (product_id, qty_before, qty_added, qty_after, notes, created_by)
+       VALUES (?,?,?,?,?,?)`,
+      [
+        req.params.id,
+        before,
+        added,
+        after,
+        notes?.trim() || null,
+        req.user?.id || null,
+      ]
+    );
+
+    await conn.commit();
+    res.status(201).json({ ok: true, qty_before: before, qty_after: after });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menyimpan stok masuk' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/stock-audit', authRequired, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { items, notes, audit_date } = req.body || {};
+    if (!Array.isArray(items) || !items.length)
+      return res.status(400).json({ message: 'Minimal satu baris produk' });
+
+    let auditDate = typeof audit_date === 'string' ? audit_date.trim() : '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(auditDate)) {
+      auditDate = new Date().toISOString().slice(0, 10);
+    }
+
+    const sessionNotes = notes?.trim() ? String(notes).trim().slice(0, 500) : null;
+
+    await conn.beginTransaction();
+
+    let changed = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const productId = Number(it.product_id);
+      const newQty = Number(it.new_qty);
+      if (!productId || !Number.isFinite(newQty) || newQty < 0) {
+        await conn.rollback();
+        return res.status(400).json({
+          message: `Baris ${i + 1}: produk atau stok baru tidak valid`,
+        });
+      }
+      const [prows] = await conn.query(
+        'SELECT id, stock FROM products WHERE id = ? FOR UPDATE',
+        [productId]
+      );
+      const pr = prows[0];
+      if (!pr) {
+        await conn.rollback();
+        return res.status(400).json({ message: `Baris ${i + 1}: produk tidak ditemukan` });
+      }
+      const before = Number(pr.stock) || 0;
+      const after = Math.floor(newQty);
+      if (before === after) continue;
+
+      await conn.query('UPDATE products SET stock = ? WHERE id = ?', [after, productId]);
+      await conn.query(
+        `INSERT INTO stock_audit_history
+          (product_id, qty_before, qty_after, qty_delta, session_notes, audit_date, created_by)
+         VALUES (?,?,?,?,?,?,?)`,
+        [
+          productId,
+          before,
+          after,
+          after - before,
+          sessionNotes,
+          auditDate,
+          req.user?.id || null,
+        ]
+      );
+      changed += 1;
+    }
+
+    if (!changed) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Tidak ada perubahan stok (nilai sama dengan sekarang)' });
+    }
+
+    await conn.commit();
+    res.status(201).json({ ok: true, rows: changed });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menyimpan audit stok' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.get('/api/stock-audit-history', authRequired, async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search = '' } = req.query;
+    const { page: p, limit: l, offset } = paginate(page, limit);
+    const q = `%${String(search).trim()}%`;
+
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS c
+       FROM stock_audit_history h
+       JOIN products p ON p.id = h.product_id
+       LEFT JOIN users u ON u.id = h.created_by
+       WHERE p.name LIKE ? OR IFNULL(p.barcode,'') LIKE ? OR IFNULL(h.session_notes,'') LIKE ? OR IFNULL(u.name,'') LIKE ?`,
+      [q, q, q, q]
+    );
+    const total = countRows[0].c;
+
+    const [rows] = await pool.query(
+      `SELECT h.id, h.product_id, h.qty_before, h.qty_after, h.qty_delta, h.session_notes, h.audit_date, h.created_at,
+              p.name AS product_name, p.barcode AS product_barcode, u.name AS created_by_name
+       FROM stock_audit_history h
+       JOIN products p ON p.id = h.product_id
+       LEFT JOIN users u ON u.id = h.created_by
+       WHERE p.name LIKE ? OR IFNULL(p.barcode,'') LIKE ? OR IFNULL(h.session_notes,'') LIKE ? OR IFNULL(u.name,'') LIKE ?
+       ORDER BY h.id DESC
+       LIMIT ? OFFSET ?`,
+      [q, q, q, q, l, offset]
+    );
+
+    res.json({ data: rows, page: p, limit: l, total });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat histori audit stok' });
+  }
 });
 
 app.get('/api/products/:id/stock-in-history', authRequired, async (req, res) => {

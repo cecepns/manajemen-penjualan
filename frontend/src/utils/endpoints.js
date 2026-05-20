@@ -1,4 +1,4 @@
-const DEFAULT_BACKEND_BASE_URL = 'https://api-inventory.isavralabel.com/manajemen-penjualan';
+const DEFAULT_BACKEND_BASE_URL = 'https://api.kingcreativestudio.my.id/manajemen-penjualan';
 
 function normalizeBaseUrl(url) {
   return String(url || DEFAULT_BACKEND_BASE_URL).replace(/\/+$/, '');

@@ -13,6 +13,12 @@ function isShippedPhase(s) {
   return SHIPPED_PHASE.includes(s);
 }
 
+function getLocalDateString() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+
 /** Menu select produk di portal agar tidak terpotong overflow modal (z di atas dialog). */
 const productSelectStyles = {
   ...selectStyles(),
@@ -30,7 +36,7 @@ const emptyHeader = {
   order_no: '',
   resi: '',
   store_id: null,
-  order_date: new Date().toISOString().slice(0, 10),
+  order_date: getLocalDateString(),
   status: 'diproses',
   nominal_cair: '',
   notes: '',

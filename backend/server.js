@@ -26,6 +26,7 @@ const pool = mysql.createPool({
   // Bantu mencegah putus idle connection yang memicu ECONNRESET di beberapa host.
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
+  dateStrings: true,
 });
 
 const app = express();
@@ -487,6 +488,9 @@ app.get('/api/products/:id/stock-history', authRequired, staffExceptChecker, asy
     if (!productId)
       return res.status(400).json({ message: 'Produk tidak valid' });
 
+    const { page = 1, limit = 10 } = req.query;
+    const { page: p, limit: l, offset } = paginate(page, limit);
+
     const [products] = await pool.query(
       'SELECT id, name, barcode, photo_url, stock, updated_at FROM products WHERE id = ? LIMIT 1',
       [productId]
@@ -494,12 +498,11 @@ app.get('/api/products/:id/stock-history', authRequired, staffExceptChecker, asy
     const product = products[0];
     if (!product) return res.status(404).json({ message: 'Produk tidak ada' });
 
-    const [rows] = await pool.query(
-      `(
+    const historyUnion = `(
         SELECT
           'stock_out' AS type,
           o.id AS ref_id,
-          o.created_at AS happened_at,
+          o.order_date AS happened_at,
           o.qty AS qty_delta,
           o.order_no,
           o.status AS order_status,
@@ -541,18 +544,35 @@ app.get('/api/products/:id/stock-history', authRequired, staffExceptChecker, asy
         FROM stock_audit_history a
         LEFT JOIN users u ON u.id = a.created_by
         WHERE a.product_id = ?
-      )
-      ORDER BY happened_at DESC, ref_id DESC
-      LIMIT 100`,
+      )`;
+
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS c FROM (${historyUnion}) hist`,
       [productId, productId, productId]
+    );
+    const total = countRows[0].c;
+
+    const [rows] = await pool.query(
+      `SELECT * FROM (${historyUnion}) hist
+       ORDER BY happened_at DESC, ref_id DESC
+       LIMIT ? OFFSET ?`,
+      [productId, productId, productId, l, offset]
     );
 
     res.json({
       product,
-      history: rows.map((r) => ({
+      data: rows.map((r) => ({
         ...r,
+        happened_at:
+          r.type === 'stock_out'
+            ? orderDateKeyDb(r.happened_at)
+            : r.happened_at,
         qty_delta: Number(r.qty_delta) || 0,
       })),
+      page: p,
+      limit: l,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / l)),
     });
   } catch (e) {
     console.error(e);
@@ -931,7 +951,7 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
       HPP: o.hpp_snapshot,
       TotalModal: Number(o.qty) * Number(o.hpp_snapshot),
       Toko: o.store_name,
-      Tanggal: o.order_date,
+      Tanggal: orderDateKeyDb(o.order_date),
       Status: o.status,
       NominalCair: o.nominal_cair,
       StatusCair: o.nominal_cair == null ? 'Belum Cair' : 'Sudah Cair',
@@ -1172,7 +1192,7 @@ app.get('/api/orders', authRequired, staffExceptChecker, async (req, res) => {
         resi: row.resi || '',
         store_id: row.store_id,
         store_name: row.store_name,
-        order_date: row.order_date,
+        order_date: orderDateKeyDb(row.order_date),
         item_count: Number(row.item_count),
         qty_sum: Number(row.qty_sum),
         total_modal: Number(row.total_modal),

@@ -14,7 +14,9 @@ function formatMoney(n) {
 }
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
 }
 
 export default function StockAuditPage() {

@@ -85,10 +85,10 @@ function payoutLabel(row) {
   return 'sudah_cair';
 }
 
-function labaForRow(row) {
-  const modal = Number(row.qty) * Number(row.hpp_snapshot);
+function labaForRow(row, totalOrderModal = null) {
+  const modal = totalOrderModal != null ? Number(totalOrderModal) : Number(row.qty) * Number(row.hpp_snapshot);
   const nc = row.nominal_cair != null ? Number(row.nominal_cair) : null;
-  if (row.status === 'retur') return Math.min(0, (nc ?? 0) - modal);
+  if (row.status === 'retur') return Math.min(0, (nc ?? 0) - (Number(row.qty) * Number(row.hpp_snapshot)));
   if (nc == null) return null;
   return nc - modal;
 }
@@ -941,22 +941,44 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
       params
     );
 
-    const sheet = rows.map((o) => ({
-      NoPesanan: o.order_no,
-      Resi: o.resi,
-      Produk: o.product_name,
-      Variasi: o.variasi,
-      Qty: o.qty,
-      HargaJual: o.selling_price,
-      HPP: o.hpp_snapshot,
-      TotalModal: Number(o.qty) * Number(o.hpp_snapshot),
-      Toko: o.store_name,
-      Tanggal: orderDateKeyDb(o.order_date),
-      Status: o.status,
-      NominalCair: o.nominal_cair,
-      StatusCair: o.nominal_cair == null ? 'Belum Cair' : 'Sudah Cair',
-      Laba: labaForRow(o) == null ? '' : labaForRow(o),
-    }));
+    // Group rows by order key to calculate total order modal for multi-item orders
+    const orderTotals = new Map();
+    for (const r of rows) {
+      const key = `${r.order_no}\0${r.store_id}\0${orderDateKeyDb(r.order_date)}`;
+      const prevModal = orderTotals.get(key) || 0;
+      orderTotals.set(key, prevModal + Number(r.qty) * Number(r.hpp_snapshot));
+    }
+
+    const sheet = rows.map((o) => {
+      const key = `${o.order_no}\0${o.store_id}\0${orderDateKeyDb(o.order_date)}`;
+      const totalOrderModal = orderTotals.get(key) || 0;
+      const modalThisRow = Number(o.qty) * Number(o.hpp_snapshot);
+
+      let laba = '';
+      if (o.status === 'retur') {
+        const nc = o.nominal_cair != null ? Number(o.nominal_cair) : 0;
+        laba = Math.min(0, nc - modalThisRow);
+      } else if (o.nominal_cair != null) {
+        laba = Number(o.nominal_cair) - totalOrderModal;
+      }
+
+      return {
+        NoPesanan: o.order_no,
+        Resi: o.resi,
+        Produk: o.product_name,
+        Variasi: o.variasi,
+        Qty: o.qty,
+        HargaJual: o.selling_price,
+        HPP: o.hpp_snapshot,
+        TotalModal: modalThisRow,
+        Toko: o.store_name,
+        Tanggal: orderDateKeyDb(o.order_date),
+        Status: o.status,
+        NominalCair: o.nominal_cair,
+        StatusCair: o.nominal_cair == null ? 'Belum Cair' : 'Sudah Cair',
+        Laba: laba,
+      };
+    });
 
     res.json({ data: sheet });
   } catch (e) {

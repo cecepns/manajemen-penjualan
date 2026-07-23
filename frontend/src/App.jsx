@@ -12,6 +12,7 @@ import StockAuditPage from './pages/StockAuditPage.jsx';
 import StoresPage from './pages/StoresPage.jsx';
 import UsersPage from './pages/UsersPage.jsx';
 import WarehouseCourierPage from './pages/WarehouseCourierPage.jsx';
+import ExpensesPage from './pages/ExpensesPage.jsx';
 
 function PrivateRoute({ children }) {
   const { user, ready } = useAuth();
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="stores" element={<StoresPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="kurir-gudang" element={<WarehouseCourierPage />} />
+        <Route path="expenses" element={<ExpensesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

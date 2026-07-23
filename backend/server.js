@@ -1823,15 +1823,83 @@ app.get('/api/dashboard', authRequired, staffExceptChecker, async (req, res) => 
       params
     );
 
-    const [labaRows] = await pool.query(
-      `SELECT nominal_cair, qty, hpp_snapshot, status FROM orders WHERE ${oWhere} AND nominal_cair IS NOT NULL`,
+    const [labaDb] = await pool.query(
+      `SELECT SUM(
+        CASE
+          WHEN o.status = 'retur' THEN LEAST(0, IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot)
+          ELSE IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot
+        END
+      ) AS total_laba
+      FROM orders o
+      WHERE ${oWhereAliased}
+        AND (
+          o.status = 'retur'
+          OR EXISTS (
+            SELECT 1 FROM orders x
+            WHERE x.order_no = o.order_no
+              AND x.store_id = o.store_id
+              AND DATE(x.order_date) = DATE(o.order_date)
+              AND x.nominal_cair IS NOT NULL
+          )
+        )`,
       params
     );
-    let labaBersih = 0;
-    for (const row of labaRows) {
-      const l = labaForRow(row);
-      if (l != null) labaBersih += l;
+    const labaBersih = Number(labaDb[0].total_laba) || 0;
+    // Overall expenses
+    let expWhere = '1=1';
+    const expParams = [];
+    if (store_id) {
+      expWhere += ' AND store_id = ?';
+      expParams.push(store_id);
     }
+    if (date_from) {
+      expWhere += ' AND expense_date >= ?';
+      expParams.push(date_from);
+    }
+    if (date_to) {
+      expWhere += ' AND expense_date <= ?';
+      expParams.push(date_to);
+    }
+
+    const [expSum] = await pool.query(
+      `SELECT 
+         COALESCE(SUM(CASE WHEN category = 'operasional' THEN amount ELSE 0 END), 0) AS ops,
+         COALESCE(SUM(CASE WHEN category = 'iklan' THEN amount ELSE 0 END), 0) AS ads,
+         COALESCE(SUM(CASE WHEN category = 'lainnya' THEN amount ELSE 0 END), 0) AS lain
+       FROM expenses
+       WHERE ${expWhere}`,
+      expParams
+    );
+    const totalOps = Number(expSum[0].ops) || 0;
+    const totalAds = Number(expSum[0].ads) || 0;
+    const totalLain = Number(expSum[0].lain) || 0;
+    const totalExpenses = totalOps + totalAds + totalLain;
+
+    // Overall nominal cair (revenue)
+    const [cairDb] = await pool.query(
+      `SELECT COALESCE(SUM(nominal_cair), 0) AS t FROM orders WHERE ${oWhere} AND nominal_cair IS NOT NULL`,
+      params
+    );
+    const totalNominalCair = Number(cairDb[0].t) || 0;
+
+    // Overall modal cair (COGS)
+    const [modalCairDb] = await pool.query(
+      `SELECT COALESCE(SUM(o.qty * o.hpp_snapshot), 0) AS t
+       FROM orders o
+       WHERE ${oWhereAliased}
+         AND (
+           o.status = 'retur'
+           OR EXISTS (
+             SELECT 1 FROM orders x
+             WHERE x.order_no = o.order_no
+               AND x.store_id = o.store_id
+               AND DATE(x.order_date) = DATE(o.order_date)
+               AND x.nominal_cair IS NOT NULL
+           )
+         )`,
+      params
+    );
+    const totalModalCair = Number(modalCairDb[0].t) || 0;
 
     const [stokSummary] = await pool.query(
       `SELECT
@@ -1899,28 +1967,68 @@ app.get('/api/dashboard', authRequired, staffExceptChecker, async (req, res) => 
            )`,
         pparams
       );
-      const [lr] = await pool.query(
-        `SELECT nominal_cair, qty, hpp_snapshot, status FROM orders WHERE ${ow} AND nominal_cair IS NOT NULL`,
+      const [labaDbStore] = await pool.query(
+        `SELECT SUM(
+          CASE
+            WHEN o.status = 'retur' THEN LEAST(0, IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot)
+            ELSE IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot
+          END
+        ) AS total_laba
+        FROM orders o
+        WHERE ${owAliased}
+          AND (
+            o.status = 'retur'
+            OR EXISTS (
+              SELECT 1 FROM orders x
+              WHERE x.order_no = o.order_no
+                AND x.store_id = o.store_id
+                AND DATE(x.order_date) = DATE(o.order_date)
+                AND x.nominal_cair IS NOT NULL
+            )
+          )`,
         pparams
       );
-      let laba = 0;
-      for (const row of lr) {
-        const l = labaForRow(row);
-        if (l != null) laba += l;
+      const laba = Number(labaDbStore[0].total_laba) || 0;
+
+      // Store specific expenses
+      let expw = 'store_id = ?';
+      const expparams = [t.id];
+      if (date_from) {
+        expw += ' AND expense_date >= ?';
+        expparams.push(date_from);
       }
+      if (date_to) {
+        expw += ' AND expense_date <= ?';
+        expparams.push(date_to);
+      }
+      const [storeExpSum] = await pool.query(
+        `SELECT COALESCE(SUM(amount), 0) AS t FROM expenses WHERE ${expw}`,
+        expparams
+      );
+      const storeExpense = Number(storeExpSum[0].t) || 0;
+
       perTokoLaba.push({
         store_id: t.id,
         name: t.name,
         total_penjualan_cair: Number(cairSum[0].t),
         modal_belum_cair: Number(modalBelum[0].t),
-        laba,
+        laba_kotor: laba,
+        total_expense: storeExpense,
+        laba_bersih: laba - storeExpense,
       });
     }
 
     res.json({
       total_order_belum_cair: belumCair[0].c,
       total_modal_nyangkut: Number(modalNyangkut[0].t),
-      laba_bersih: labaBersih,
+      laba_kotor: labaBersih,
+      total_nominal_cair: totalNominalCair,
+      total_modal_cair: totalModalCair,
+      total_expenses_operasional: totalOps,
+      total_expenses_iklan: totalAds,
+      total_expenses_lainnya: totalLain,
+      total_expenses: totalExpenses,
+      laba_bersih: labaBersih - totalExpenses,
       total_stok_qty: Number(stokSummary[0].total_stok_qty),
       total_modal_stok: Number(stokSummary[0].total_modal_stok),
       top_produk_keluar: topProduk.map((r) => ({
@@ -2017,6 +2125,116 @@ app.delete('/api/users/:id', authRequired, staffExceptChecker, ownerOnly, async 
     return res.status(400).json({ message: 'Tidak bisa hapus diri sendiri' });
   await pool.query('DELETE FROM users WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
+});
+
+/* ——— Expenses (Keuangan) ——— */
+app.get('/api/expenses', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 10, category, store_id, date_from, date_to, search } = req.query;
+    const { page: p, limit: l, offset } = paginate(page, limit);
+    let where = '1=1';
+    const params = [];
+    if (category) {
+      where += ' AND e.category = ?';
+      params.push(category);
+    }
+    if (store_id) {
+      where += ' AND e.store_id = ?';
+      params.push(store_id);
+    }
+    if (date_from) {
+      where += ' AND e.expense_date >= ?';
+      params.push(date_from);
+    }
+    if (date_to) {
+      where += ' AND e.expense_date <= ?';
+      params.push(date_to);
+    }
+    if (search) {
+      where += ' AND e.notes LIKE ?';
+      params.push(`%${String(search).trim()}%`);
+    }
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS c FROM expenses e WHERE ${where}`,
+      params
+    );
+    const total = countRows[0].c;
+    const [rows] = await pool.query(
+      `SELECT e.*, s.name AS store_name, u.name AS user_name 
+       FROM expenses e 
+       LEFT JOIN stores s ON s.id = e.store_id 
+       LEFT JOIN users u ON u.id = e.created_by
+       WHERE ${where} 
+       ORDER BY e.expense_date DESC, e.id DESC 
+       LIMIT ? OFFSET ?`,
+      [...params, l, offset]
+    );
+    res.json({ data: rows, page: p, limit: l, total });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat data pengeluaran' });
+  }
+});
+
+app.post('/api/expenses', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const { category, amount, expense_date, store_id, notes } = req.body || {};
+    if (!category || !amount || !expense_date) {
+      return res.status(400).json({ message: 'Kategori, jumlah, dan tanggal wajib diisi' });
+    }
+    const [r] = await pool.query(
+      `INSERT INTO expenses (category, amount, expense_date, store_id, notes, created_by) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        category,
+        Number(amount) || 0,
+        expense_date,
+        store_id ? Number(store_id) : null,
+        notes || null,
+        req.user.id
+      ]
+    );
+    res.status(201).json({ id: r.insertId });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menyimpan pengeluaran' });
+  }
+});
+
+app.put('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const { category, amount, expense_date, store_id, notes } = req.body || {};
+    if (!category || !amount || !expense_date) {
+      return res.status(400).json({ message: 'Kategori, jumlah, dan tanggal wajib diisi' });
+    }
+    await pool.query(
+      `UPDATE expenses 
+       SET category = ?, amount = ?, expense_date = ?, store_id = ?, notes = ? 
+       WHERE id = ?`,
+      [
+        category,
+        Number(amount) || 0,
+        expense_date,
+        store_id ? Number(store_id) : null,
+        notes || null,
+        req.params.id
+      ]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal mengubah pengeluaran' });
+  }
+});
+
+app.delete('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM expenses WHERE id = ?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menghapus pengeluaran' });
+  }
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));

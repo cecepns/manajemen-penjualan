@@ -12,6 +12,7 @@ import {
   Store,
   Truck,
   Users,
+  Wallet,
   X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -25,6 +26,7 @@ const links = [
   { to: '/stock-history', label: 'History stok', Icon: History },
   { to: '/stores', label: 'Toko', Icon: Store },
   { to: '/kurir-gudang', label: 'Kurir gudang', Icon: Truck },
+  { to: '/expenses', label: 'Keuangan', ownerOnly: true, Icon: Wallet },
   { to: '/users', label: 'User', ownerOnly: true, Icon: Users },
 ];
 

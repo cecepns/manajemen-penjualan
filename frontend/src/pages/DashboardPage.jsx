@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import DatePicker, { registerLocale } from 'react-datepicker';
 import { format } from 'date-fns';
 import { id as localeId } from 'date-fns/locale/id';
-import { CalendarRange, ClipboardList, LayoutDashboard, Package, PiggyBank, Store, TrendingUp } from 'lucide-react';
+import { CalendarRange, ClipboardList, Coins, LayoutDashboard, Package, PiggyBank, Store, TrendingUp, Wallet } from 'lucide-react';
 import Select from 'react-select';
 import { api, toastApiError } from '../utils/api.js';
 import { selectStyles } from '../components/selectTheme.js';
@@ -119,7 +119,8 @@ export default function DashboardPage() {
 
       {dash && (
         <>
-          <div className="grid grid-cols-1 gap-3 mb-4 md:grid-cols-5">
+          {/* Inventory & Operational Stats */}
+          <div className="grid grid-cols-1 gap-3 mb-4 md:grid-cols-4">
             <div className="stat">
               <div className="stat-icon bg-blue-50 text-blue-600">
                 <ClipboardList size={20} strokeWidth={2} aria-hidden />
@@ -135,7 +136,7 @@ export default function DashboardPage() {
               <strong>{formatMoney(dash.total_modal_nyangkut)}</strong>
             </div>
             <div className="stat">
-              <div className="stat-icon bg-amber-50 text-amber-600">
+              <div className="stat-icon bg-slate-50 text-slate-600">
                 <PiggyBank size={20} strokeWidth={2} aria-hidden />
               </div>
               <span className="stat-label">Total modal stok</span>
@@ -148,12 +149,47 @@ export default function DashboardPage() {
               <span className="stat-label">Total stok (qty)</span>
               <strong>{dash.total_stok_qty ?? 0}</strong>
             </div>
-            <div className="stat">
-              <div className="stat-icon bg-green-50 text-green-600">
+          </div>
+
+          {/* Financial summary */}
+          <div className="grid grid-cols-1 gap-3 mb-4 md:grid-cols-5">
+            <div className="stat border-l-4 border-blue-500">
+              <div className="stat-icon bg-blue-50 text-blue-600">
+                <Coins size={20} strokeWidth={2} aria-hidden />
+              </div>
+              <span className="stat-label">Total Nominal Cair</span>
+              <strong>{formatMoney(dash.total_nominal_cair)}</strong>
+            </div>
+            <div className="stat border-l-4 border-slate-500">
+              <div className="stat-icon bg-slate-50 text-slate-600">
+                <PiggyBank size={20} strokeWidth={2} aria-hidden />
+              </div>
+              <span className="stat-label">Modal Order (COGS)</span>
+              <strong>{formatMoney(dash.total_modal_cair)}</strong>
+            </div>
+            <div className="stat border-l-4 border-amber-500">
+              <div className="stat-icon bg-amber-50 text-amber-600">
                 <TrendingUp size={20} strokeWidth={2} aria-hidden />
               </div>
-              <span className="stat-label">Laba bersih</span>
-              <strong>{formatMoney(dash.laba_bersih)}</strong>
+              <span className="stat-label">Laba Kotor</span>
+              <strong>{formatMoney(dash.laba_kotor)}</strong>
+            </div>
+            <div className="stat border-l-4 border-red-500">
+              <div className="stat-icon bg-red-50 text-red-600">
+                <Wallet size={20} strokeWidth={2} aria-hidden />
+              </div>
+              <span className="stat-label">Total Pengeluaran</span>
+              <strong className="text-red-600">{formatMoney(dash.total_expenses)}</strong>
+              <div className="text-[10px] text-slate-500 mt-0.5 truncate">
+                Ops: {formatMoney(dash.total_expenses_operasional)} | Ads: {formatMoney(dash.total_expenses_iklan)}
+              </div>
+            </div>
+            <div className="stat border-l-4 border-green-500 bg-green-50/20">
+              <div className="stat-icon bg-green-50 text-green-600">
+                <Coins size={20} strokeWidth={2} aria-hidden />
+              </div>
+              <span className="stat-label font-bold text-green-800">Laba Bersih</span>
+              <strong className="text-green-700">{formatMoney(dash.laba_bersih)}</strong>
             </div>
           </div>
 
@@ -201,7 +237,9 @@ export default function DashboardPage() {
                     <th>Toko</th>
                     <th>Total cair</th>
                     <th>Modal belum cair</th>
-                    <th>Laba</th>
+                    <th>Laba Kotor</th>
+                    <th>Biaya Iklan (Ads)</th>
+                    <th>Laba Bersih</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -210,7 +248,9 @@ export default function DashboardPage() {
                       <td>{t.name}</td>
                       <td>{formatMoney(t.total_penjualan_cair)}</td>
                       <td>{formatMoney(t.modal_belum_cair)}</td>
-                      <td>{formatMoney(t.laba)}</td>
+                      <td className="font-semibold text-slate-800">{formatMoney(t.laba_kotor)}</td>
+                      <td className="text-red-600">{formatMoney(t.total_expense)}</td>
+                      <td className="font-semibold text-green-600">{formatMoney(t.laba_bersih)}</td>
                     </tr>
                   ))}
                 </tbody>

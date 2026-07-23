@@ -8,6 +8,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
+
 const UPLOAD_DIR = path.join(__dirname, 'uploads-manajemen-penjualan');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -16,26 +17,25 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-ganti-di-production';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
 
 const pool = mysql.createPool({
-  host: process.env.MYSQL_HOST || '127.0.0.1',
-  port: Number(process.env.MYSQL_PORT) || 3306,
-  user: process.env.MYSQL_USER || 'root',
-  password: process.env.MYSQL_PASSWORD || '',
-  database: process.env.MYSQL_DATABASE || 'manajemen_penjualan',
+  host: "localhost",
+  user: "kinq6231_manajemen_penjualan",
+  password: "kinq6231_manajemen_penjualan",
+  database: "kinq6231_manajemen_penjualan",
   waitForConnections: true,
   connectionLimit: 10,
-  // Bantu mencegah putus idle connection yang memicu ECONNRESET di beberapa host.
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
   dateStrings: true,
 });
 
-const app = express();
-app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+const app = express.Router();
+
+
 app.use(
   '/uploads',
   express.static(UPLOAD_DIR, { fallthrough: true, maxAge: '1d' })
 );
+
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
@@ -922,16 +922,18 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
       params.push(date_to);
     }
     if (payout === 'belum') {
-      where += ` AND (
-        SELECT SUM(CASE WHEN x.nominal_cair IS NULL THEN 1 ELSE 0 END)
-        FROM orders x
+      where += ` AND NOT EXISTS (
+        SELECT 1 FROM orders x
         WHERE x.order_no = o.order_no AND x.store_id = o.store_id AND DATE(x.order_date) = DATE(o.order_date)
-      ) = (
-        SELECT COUNT(*)
-        FROM orders x
-        WHERE x.order_no = o.order_no AND x.store_id = o.store_id AND DATE(x.order_date) = DATE(o.order_date)
+          AND x.nominal_cair IS NOT NULL
       )`;
-    } else if (payout === 'sudah') where += ' AND o.nominal_cair IS NOT NULL';
+    } else if (payout === 'sudah') {
+      where += ` AND EXISTS (
+        SELECT 1 FROM orders x
+        WHERE x.order_no = o.order_no AND x.store_id = o.store_id AND DATE(x.order_date) = DATE(o.order_date)
+          AND x.nominal_cair IS NOT NULL
+      )`;
+    }
 
     const [rows] = await pool.query(
       `SELECT o.*, s.name AS store_name FROM orders o
@@ -1130,10 +1132,10 @@ app.get('/api/orders', authRequired, staffExceptChecker, async (req, res) => {
     let payoutHaving = '';
     if (payout === 'belum') {
       payoutHaving =
-        ' HAVING SUM(CASE WHEN o.nominal_cair IS NULL THEN 1 ELSE 0 END) = COUNT(*)';
+        ' HAVING SUM(CASE WHEN o.nominal_cair IS NOT NULL THEN 1 ELSE 0 END) = 0';
     } else if (payout === 'sudah') {
       payoutHaving =
-        ' HAVING SUM(CASE WHEN o.nominal_cair IS NULL THEN 1 ELSE 0 END) = 0 AND COUNT(*) > 0';
+        ' HAVING SUM(CASE WHEN o.nominal_cair IS NOT NULL THEN 1 ELSE 0 END) > 0';
     }
 
     const groupBy = 'o.order_no, o.store_id, DATE(o.order_date)';
@@ -1173,9 +1175,8 @@ app.get('/api/orders', authRequired, staffExceptChecker, async (req, res) => {
            ELSE 'campuran'
          END AS status,
          CASE
-           WHEN SUM(CASE WHEN o.nominal_cair IS NULL THEN 1 ELSE 0 END) = COUNT(*) THEN 'Belum Cair'
-           WHEN SUM(CASE WHEN o.nominal_cair IS NULL THEN 1 ELSE 0 END) = 0 THEN 'Sudah Cair'
-           ELSE 'Sebagian cair'
+           WHEN SUM(CASE WHEN o.nominal_cair IS NOT NULL THEN 1 ELSE 0 END) = 0 THEN 'Belum Cair'
+           ELSE 'Sudah Cair'
          END AS payout_status_label,
          MAX(o.nominal_cair) AS nominal_cair_value,
          CASE
@@ -1203,9 +1204,9 @@ app.get('/api/orders', authRequired, staffExceptChecker, async (req, res) => {
     const data = rows.map((row) => {
       const lineIds = row.line_ids_csv
         ? String(row.line_ids_csv)
-            .split(',')
-            .map((x) => Number(x))
-            .filter((n) => n > 0)
+          .split(',')
+          .map((x) => Number(x))
+          .filter((n) => n > 0)
         : [Number(row.id)];
       return {
         id: Number(row.id),
@@ -1268,8 +1269,8 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
 
       const gnom =
         body.nominal_cair === '' ||
-        body.nominal_cair == null ||
-        body.nominal_cair === undefined
+          body.nominal_cair == null ||
+          body.nominal_cair === undefined
           ? null
           : Number(body.nominal_cair);
       if (role === 'karyawan' && gnom != null)
@@ -1322,8 +1323,8 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
         const hpp_snapshot = orderLineHppSnapshot(req.user?.role, it, { productHpp });
         const groupNominal =
           body.nominal_cair === '' ||
-          body.nominal_cair == null ||
-          body.nominal_cair === undefined
+            body.nominal_cair == null ||
+            body.nominal_cair === undefined
             ? null
             : Number(body.nominal_cair);
         const nominal_cair = i === 0 ? groupNominal : null;
@@ -1394,8 +1395,8 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
     const qty = Number(body.qty) || 1;
     const nominal_cair =
       body.nominal_cair === '' ||
-      body.nominal_cair == null ||
-      body.nominal_cair === undefined
+        body.nominal_cair == null ||
+        body.nominal_cair === undefined
         ? null
         : Number(body.nominal_cair);
     if (role === 'karyawan' && nominal_cair != null)
@@ -1569,8 +1570,8 @@ app.put('/api/orders/group', authRequired, staffExceptChecker, async (req, res) 
       });
       const groupNominal =
         body.nominal_cair === '' ||
-        body.nominal_cair == null ||
-        body.nominal_cair === undefined
+          body.nominal_cair == null ||
+          body.nominal_cair === undefined
           ? null
           : Number(body.nominal_cair);
       const nominal_cair = i === 0 ? groupNominal : null;
@@ -2257,15 +2258,9 @@ app.delete('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, 
     console.error(e);
     res.status(500).json({ message: 'Gagal menghapus pengeluaran' });
   }
-});
+})
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.listen(PORT, async () => {
-  try {
-    await ensureDefaultAdmin();
-  } catch (e) {
-    console.error('DB error — pastikan MySQL jalan dan schema.sql sudah diimpor:', e.message);
-  }
-  console.log(`API http://localhost:${PORT}`);
-});
+
+module.exports = app;

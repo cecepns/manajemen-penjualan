@@ -8,6 +8,7 @@ import { confirmAction } from '../utils/confirm.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import PaginationBar from '../components/PaginationBar.jsx';
 import { selectStyles } from '../components/selectTheme.js';
+import Modal from '../components/Modal.jsx';
 
 const LIMIT = 10;
 
@@ -30,14 +31,6 @@ const CATEGORY_OPTIONS = [
 const INCOME_CATEGORY_OPTIONS = [
   { value: 'hasil_penjualan', label: 'Hasil Penjualan' },
   { value: 'penambahan_modal', label: 'Penambahan Modal' },
-];
-
-const INCOME_SOURCE_OPTIONS = [
-  { value: 'Manual Order', label: 'Manual Order' },
-  { value: 'SCM', label: 'SCM' },
-  { value: 'Sentra', label: 'Sentra' },
-  { value: 'Rajawali', label: 'Rajawali' },
-  { value: 'Lainnya', label: 'Lainnya (Kustom)' }
 ];
 
 export default function ExpensesPage() {
@@ -83,6 +76,13 @@ export default function ExpensesPage() {
   const [formIncomeAmount, setFormIncomeAmount] = useState('');
   const [formIncomeDate, setFormIncomeDate] = useState(new Date());
   const [formIncomeNotes, setFormIncomeNotes] = useState('');
+
+  // Dynamic source options derived from backend stores
+  const incomeSourceOptions = [
+    { value: 'Manual Order', label: 'Manual Order' },
+    ...stores.map(s => ({ value: s.name, label: s.name })),
+    { value: 'Lainnya', label: 'Lainnya (Kustom)' }
+  ];
 
   const fetchStores = useCallback(async () => {
     try {
@@ -195,7 +195,8 @@ export default function ExpensesPage() {
     } else {
       setModalType('income');
       setFormIncomeCategory(item.category);
-      if (['Manual Order', 'SCM', 'Sentra', 'Rajawali'].includes(item.source)) {
+      const isStandardSource = ['Manual Order', ...stores.map(s => s.name)].includes(item.source);
+      if (isStandardSource) {
         setFormIncomeSource(item.source);
         setFormCustomSource('');
       } else {
@@ -308,6 +309,58 @@ export default function ExpensesPage() {
     }
   };
 
+  const handleExport = async () => {
+    if (!dateFrom || !dateTo) {
+      alert('Silakan pilih rentang tanggal (Dari Tanggal & Sampai Tanggal) terlebih dahulu.');
+      return;
+    }
+
+    try {
+      const fromStr = format(dateFrom, 'yyyy-MM-dd');
+      const toStr = format(dateTo, 'yyyy-MM-dd');
+      
+      const { data: expRes } = await api.get('/api/expenses', {
+        params: { date_from: fromStr, date_to: toStr, limit: 100000, page: 1 }
+      });
+      
+      const { data: incRes } = await api.get('/api/incomes', {
+        params: { date_from: fromStr, date_to: toStr, limit: 100000, page: 1 }
+      });
+
+      const expenseList = (expRes.data || []).map(item => ({
+        'Tanggal': item.expense_date,
+        'Kategori': CATEGORY_OPTIONS.find(o => o.value === item.category)?.label || item.category,
+        'Toko': item.store_name || '-',
+        'Jumlah (Rp)': Number(item.amount) || 0,
+        'Catatan': item.notes || '-',
+        'Pencatat': item.user_name || '-'
+      }));
+
+      const incomeList = (incRes.data || []).map(item => ({
+        'Tanggal': item.income_date,
+        'Kategori': INCOME_CATEGORY_OPTIONS.find(o => o.value === item.category)?.label || item.category,
+        'Sumber / Channel': item.source || '-',
+        'Jumlah (Rp)': Number(item.amount) || 0,
+        'Catatan': item.notes || '-',
+        'Pencatat': item.user_name || '-'
+      }));
+
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(expenseList), 'Pengeluaran');
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(incomeList), 'Pemasukan');
+      
+      const fileName = `laporan-keuangan-${fromStr}-to-${toStr}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+      
+      const { toast } = await import('sonner');
+      toast.success('Laporan berhasil diexport ke Excel');
+    } catch (e) {
+      toastApiError(e);
+    }
+  };
+
   const storeOptions = stores.map(s => ({ value: s.id, label: s.name }));
   const filteredCategoryOptions = activeTab === 'expenses' ? CATEGORY_OPTIONS : INCOME_CATEGORY_OPTIONS;
 
@@ -320,6 +373,9 @@ export default function ExpensesPage() {
         </h1>
         {isOwnerOrAdmin && (
           <div className="flex gap-2">
+            <button type="button" className="btn btn-ghost border-slate-300 border bg-white" onClick={handleExport}>
+              Export Excel
+            </button>
             <button type="button" className="btn btn-secondary" onClick={handleOpenCreateIncome}>
               <Plus size={18} strokeWidth={2} aria-hidden />
               Tambah Pemasukan
@@ -431,8 +487,8 @@ export default function ExpensesPage() {
               <Select
                 isClearable
                 placeholder="Semua Sumber"
-                options={INCOME_SOURCE_OPTIONS}
-                value={INCOME_SOURCE_OPTIONS.find(o => o.value === sourceFilter) || null}
+                options={incomeSourceOptions}
+                value={incomeSourceOptions.find(o => o.value === sourceFilter) || null}
                 onChange={(o) => setSourceFilter(o?.value ?? null)}
                 styles={selectStyles()}
               />
@@ -609,168 +665,165 @@ export default function ExpensesPage() {
       <PaginationBar page={page} total={total} limit={LIMIT} onPageChange={setPage} />
 
       {/* Form Modal */}
-      {modalOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal-window max-w-lg">
-            <div className="modal-header">
-              <h3 className="modal-title">
-                {modalType === 'expense'
-                  ? (editingItem ? 'Edit Pengeluaran' : 'Tambah Pengeluaran Baru')
-                  : (editingItem ? 'Edit Pemasukan' : 'Tambah Pemasukan Baru')}
-              </h3>
-            </div>
-            <form onSubmit={handleSave}>
-              <div className="modal-body space-y-4">
-                {modalType === 'expense' ? (
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={
+          modalType === 'expense'
+            ? (editingItem ? 'Edit Pengeluaran' : 'Tambah Pengeluaran Baru')
+            : (editingItem ? 'Edit Pemasukan' : 'Tambah Pemasukan Baru')
+        }
+      >
+        <form onSubmit={handleSave}>
+          <div className="space-y-4">
+            {modalType === 'expense' ? (
+              <>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Kategori</label>
+                  <Select
+                    options={CATEGORY_OPTIONS}
+                    value={CATEGORY_OPTIONS.find(o => o.value === formCategory)}
+                    onChange={o => setFormCategory(o.value)}
+                    styles={selectStyles()}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Jumlah (Rp)</label>
+                  <input
+                    type="number"
+                    required
+                    value={formAmount}
+                    onChange={e => setFormAmount(e.target.value)}
+                    placeholder="Contoh: 150000"
+                    className="field-input w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Tanggal Pengeluaran</label>
+                  <DatePicker
+                    selected={formDate}
+                    onChange={d => setFormDate(d || new Date())}
+                    dateFormat="dd/MM/yyyy"
+                    required
+                    className="field-input w-full"
+                    wrapperClassName="w-full"
+                  />
+                </div>
+
+                {formCategory === 'iklan' && (
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Toko Terkait</label>
+                    <Select
+                      isClearable
+                      placeholder="Pilih Toko"
+                      options={storeOptions}
+                      value={storeOptions.find(o => o.value === formStoreId) || null}
+                      onChange={o => setFormStoreId(o?.value ?? null)}
+                      styles={selectStyles()}
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Catatan / Keterangan</label>
+                  <textarea
+                    value={formNotes}
+                    onChange={e => setFormNotes(e.target.value)}
+                    placeholder="Beli ATK, refund barang kosong, belanja supplier..."
+                    rows={3}
+                    className="field-input w-full"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Kategori Pemasukan</label>
+                  <Select
+                    options={INCOME_CATEGORY_OPTIONS}
+                    value={INCOME_CATEGORY_OPTIONS.find(o => o.value === formIncomeCategory)}
+                    onChange={o => setFormIncomeCategory(o.value)}
+                    styles={selectStyles()}
+                  />
+                </div>
+
+                {formIncomeCategory === 'hasil_penjualan' && (
                   <>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Kategori</label>
+                      <label className="block text-sm font-medium mb-1">Sumber / Channel</label>
                       <Select
-                        options={CATEGORY_OPTIONS}
-                        value={CATEGORY_OPTIONS.find(o => o.value === formCategory)}
-                        onChange={o => setFormCategory(o.value)}
+                        options={incomeSourceOptions}
+                        value={incomeSourceOptions.find(o => o.value === formIncomeSource)}
+                        onChange={o => setFormIncomeSource(o.value)}
                         styles={selectStyles()}
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Jumlah (Rp)</label>
-                      <input
-                        type="number"
-                        required
-                        value={formAmount}
-                        onChange={e => setFormAmount(e.target.value)}
-                        placeholder="Contoh: 150000"
-                        className="field-input w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Tanggal Pengeluaran</label>
-                      <DatePicker
-                        selected={formDate}
-                        onChange={d => setFormDate(d || new Date())}
-                        dateFormat="dd/MM/yyyy"
-                        required
-                        className="field-input w-full"
-                        wrapperClassName="w-full"
-                      />
-                    </div>
-
-                    {formCategory === 'iklan' && (
+                    {formIncomeSource === 'Lainnya' && (
                       <div>
-                        <label className="block text-sm font-medium mb-1">Toko Terkait</label>
-                        <Select
-                          isClearable
-                          placeholder="Pilih Toko"
-                          options={storeOptions}
-                          value={storeOptions.find(o => o.value === formStoreId) || null}
-                          onChange={o => setFormStoreId(o?.value ?? null)}
-                          styles={selectStyles()}
+                        <label className="block text-sm font-medium mb-1">Nama Sumber Kustom</label>
+                        <input
+                          type="text"
+                          required
+                          value={formCustomSource}
+                          onChange={e => setFormCustomSource(e.target.value)}
+                          placeholder="Contoh: Shopee Pay, M-Banking, dll"
+                          className="field-input w-full"
                         />
                       </div>
                     )}
-
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Catatan / Keterangan</label>
-                      <textarea
-                        value={formNotes}
-                        onChange={e => setFormNotes(e.target.value)}
-                        placeholder="Beli ATK, refund barang kosong, belanja supplier..."
-                        rows={3}
-                        className="field-input w-full"
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Kategori Pemasukan</label>
-                      <Select
-                        options={INCOME_CATEGORY_OPTIONS}
-                        value={INCOME_CATEGORY_OPTIONS.find(o => o.value === formIncomeCategory)}
-                        onChange={o => setFormIncomeCategory(o.value)}
-                        styles={selectStyles()}
-                      />
-                    </div>
-
-                    {formIncomeCategory === 'hasil_penjualan' && (
-                      <>
-                        <div>
-                          <label className="block text-sm font-medium mb-1">Sumber / Channel</label>
-                          <Select
-                            options={INCOME_SOURCE_OPTIONS}
-                            value={INCOME_SOURCE_OPTIONS.find(o => o.value === formIncomeSource)}
-                            onChange={o => setFormIncomeSource(o.value)}
-                            styles={selectStyles()}
-                          />
-                        </div>
-
-                        {formIncomeSource === 'Lainnya' && (
-                          <div>
-                            <label className="block text-sm font-medium mb-1">Nama Sumber Kustom</label>
-                            <input
-                              type="text"
-                              required
-                              value={formCustomSource}
-                              onChange={e => setFormCustomSource(e.target.value)}
-                              placeholder="Contoh: Shopee Pay, M-Banking, dll"
-                              className="field-input w-full"
-                            />
-                          </div>
-                        )}
-                      </>
-                    )}
-
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Jumlah (Rp)</label>
-                      <input
-                        type="number"
-                        required
-                        value={formIncomeAmount}
-                        onChange={e => setFormIncomeAmount(e.target.value)}
-                        placeholder="Contoh: 1000000"
-                        className="field-input w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Tanggal Pemasukan</label>
-                      <DatePicker
-                        selected={formIncomeDate}
-                        onChange={d => setFormIncomeDate(d || new Date())}
-                        dateFormat="dd/MM/yyyy"
-                        required
-                        className="field-input w-full"
-                        wrapperClassName="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Catatan / Keterangan</label>
-                      <textarea
-                        value={formIncomeNotes}
-                        onChange={e => setFormIncomeNotes(e.target.value)}
-                        placeholder="Keterangan penambahan modal atau penarikan saldo..."
-                        rows={3}
-                        className="field-input w-full"
-                      />
-                    </div>
                   </>
                 )}
-              </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-ghost" onClick={() => setModalOpen(false)}>
-                  Batal
-                </button>
-                <button type="submit" className="btn btn-primary">
-                  Simpan
-                </button>
-              </div>
-            </form>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Jumlah (Rp)</label>
+                  <input
+                    type="number"
+                    required
+                    value={formIncomeAmount}
+                    onChange={e => setFormIncomeAmount(e.target.value)}
+                    placeholder="Contoh: 1000000"
+                    className="field-input w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Tanggal Pemasukan</label>
+                  <DatePicker
+                    selected={formIncomeDate}
+                    onChange={d => setFormIncomeDate(d || new Date())}
+                    dateFormat="dd/MM/yyyy"
+                    required
+                    className="field-input w-full"
+                    wrapperClassName="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Catatan / Keterangan</label>
+                  <textarea
+                    value={formIncomeNotes}
+                    onChange={e => setFormIncomeNotes(e.target.value)}
+                    placeholder="Keterangan penambahan modal atau penarikan saldo..."
+                    rows={3}
+                    className="field-input w-full"
+                  />
+                </div>
+              </>
+            )}
           </div>
-        </div>
-      )}
+          <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
+            <button type="button" className="btn btn-ghost" onClick={() => setModalOpen(false)}>
+              Batal
+            </button>
+            <button type="submit" className="btn btn-primary">
+              Simpan
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -1888,7 +1888,7 @@ app.get('/api/dashboard', authRequired, staffExceptChecker, async (req, res) => 
       `SELECT 
          COALESCE(SUM(CASE WHEN category = 'operasional' THEN amount ELSE 0 END), 0) AS ops,
          COALESCE(SUM(CASE WHEN category = 'iklan' THEN amount ELSE 0 END), 0) AS ads,
-         COALESCE(SUM(CASE WHEN category = 'lainnya' THEN amount ELSE 0 END), 0) AS lain
+         COALESCE(SUM(CASE WHEN category NOT IN ('operasional', 'iklan') THEN amount ELSE 0 END), 0) AS lain
        FROM expenses
        WHERE ${expWhere}`,
       expParams
@@ -2258,7 +2258,133 @@ app.delete('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, 
     console.error(e);
     res.status(500).json({ message: 'Gagal menghapus pengeluaran' });
   }
-})
+});
+
+/* ——— Incomes (Pemasukan) ——— */
+app.get('/api/incomes', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const { page = 1, limit = 10, category, source, date_from, date_to, search } = req.query;
+    const { page: p, limit: l, offset } = paginate(page, limit);
+    let where = '1=1';
+    const params = [];
+    if (category) {
+      where += ' AND i.category = ?';
+      params.push(category);
+    }
+    if (source) {
+      where += ' AND i.source = ?';
+      params.push(source);
+    }
+    if (date_from) {
+      where += ' AND i.income_date >= ?';
+      params.push(date_from);
+    }
+    if (date_to) {
+      where += ' AND i.income_date <= ?';
+      params.push(date_to);
+    }
+    if (search) {
+      where += ' AND (i.notes LIKE ? OR i.source LIKE ?)';
+      params.push(`%${String(search).trim()}%`, `%${String(search).trim()}%`);
+    }
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS c FROM incomes i WHERE ${where}`,
+      params
+    );
+    const total = countRows[0].c;
+    const [rows] = await pool.query(
+      `SELECT i.*, u.name AS user_name 
+       FROM incomes i 
+       LEFT JOIN users u ON u.id = i.created_by
+       WHERE ${where} 
+       ORDER BY i.income_date DESC, i.id DESC 
+       LIMIT ? OFFSET ?`,
+      [...params, l, offset]
+    );
+    res.json({ data: rows, page: p, limit: l, total });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat data pemasukan' });
+  }
+});
+
+app.post('/api/incomes', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const { category, source, amount, income_date, notes } = req.body || {};
+    if (!category || !amount || !income_date) {
+      return res.status(400).json({ message: 'Kategori, jumlah, dan tanggal wajib diisi' });
+    }
+    const [r] = await pool.query(
+      `INSERT INTO incomes (category, source, amount, income_date, notes, created_by) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        category,
+        source || null,
+        Number(amount) || 0,
+        income_date,
+        notes || null,
+        req.user.id
+      ]
+    );
+    res.status(201).json({ id: r.insertId });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menyimpan pemasukan' });
+  }
+});
+
+app.put('/api/incomes/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const { category, source, amount, income_date, notes } = req.body || {};
+    if (!category || !amount || !income_date) {
+      return res.status(400).json({ message: 'Kategori, jumlah, dan tanggal wajib diisi' });
+    }
+    await pool.query(
+      `UPDATE incomes 
+       SET category = ?, source = ?, amount = ?, income_date = ?, notes = ? 
+       WHERE id = ?`,
+      [
+        category,
+        source || null,
+        Number(amount) || 0,
+        income_date,
+        notes || null,
+        req.params.id
+      ]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal mengubah pemasukan' });
+  }
+});
+
+app.delete('/api/incomes/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM incomes WHERE id = ?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menghapus pemasukan' });
+  }
+});
+
+/* ——— Finance Info & Balance ——— */
+app.get('/api/finances/balance', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const [[{ total_income }]] = await pool.query(`SELECT COALESCE(SUM(amount), 0) AS total_income FROM incomes`);
+    const [[{ total_expense_deductible }]] = await pool.query(`SELECT COALESCE(SUM(amount), 0) AS total_expense_deductible FROM expenses WHERE category != 'iklan'`);
+    const saldo_mandiri = Number(total_income) - Number(total_expense_deductible);
+    res.json({
+      saldo_mandiri,
+      total_income: Number(total_income),
+      total_expense_deductible: Number(total_expense_deductible)
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat saldo' });
+  }
+});
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 

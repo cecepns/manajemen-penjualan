@@ -102,7 +102,7 @@ ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 CREATE TABLE IF NOT EXISTS expenses (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  category ENUM('operasional', 'iklan', 'lainnya') NOT NULL DEFAULT 'operasional',
+  category ENUM('operasional', 'iklan', 'lainnya', 'belanja_supplier', 'refund_manual') NOT NULL DEFAULT 'operasional',
   amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
   expense_date DATE NOT NULL,
   store_id INT UNSIGNED DEFAULT NULL,
@@ -116,4 +116,20 @@ CREATE TABLE IF NOT EXISTS expenses (
   KEY idx_expenses_date (expense_date),
   KEY idx_expenses_store (store_id)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS incomes (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  category ENUM('hasil_penjualan', 'penambahan_modal') NOT NULL,
+  source VARCHAR(120) DEFAULT NULL,
+  amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
+  income_date DATE NOT NULL,
+  notes TEXT DEFAULT NULL,
+  created_by INT UNSIGNED DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_incomes_user FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
+  KEY idx_incomes_category (category),
+  KEY idx_incomes_date (income_date)
+) ENGINE=InnoDB;
+
 

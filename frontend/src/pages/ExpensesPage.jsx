@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import DatePicker from 'react-datepicker';
 import { format, parseISO } from 'date-fns';
-import { Coins, Filter, Pencil, Plus, Trash2, Wallet, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Coins, Filter, Pencil, Plus, Trash2, Wallet, ArrowUpRight, ArrowDownRight, FileDown } from 'lucide-react';
 import Select from 'react-select';
 import { api, apiCall, toastApiError } from '../utils/api.js';
 import { confirmAction } from '../utils/confirm.jsx';
@@ -372,8 +372,9 @@ export default function ExpensesPage() {
           Keuangan &amp; Kas
         </h1>
         {isOwnerOrAdmin && (
-          <div className="flex gap-2">
-            <button type="button" className="btn btn-ghost border-slate-300 border bg-white" onClick={handleExport}>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn btn-secondary" onClick={handleExport}>
+              <FileDown size={18} strokeWidth={2} aria-hidden />
               Export Excel
             </button>
             <button type="button" className="btn btn-secondary" onClick={handleOpenCreateIncome}>
@@ -389,9 +390,9 @@ export default function ExpensesPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-200 mb-4">
+      <div className="flex border-b border-slate-200 mb-4 overflow-x-auto">
         <button
-          className={`py-2 px-4 font-semibold text-sm border-b-2 transition-all ${
+          className={`py-2 px-4 font-semibold text-sm border-b-2 transition-all whitespace-nowrap ${
             activeTab === 'expenses'
               ? 'border-blue-600 text-blue-600'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -401,7 +402,7 @@ export default function ExpensesPage() {
           Pengeluaran (Expenses)
         </button>
         <button
-          className={`py-2 px-4 font-semibold text-sm border-b-2 transition-all ${
+          className={`py-2 px-4 font-semibold text-sm border-b-2 transition-all whitespace-nowrap ${
             activeTab === 'incomes'
               ? 'border-blue-600 text-blue-600'
               : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -413,36 +414,36 @@ export default function ExpensesPage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 gap-3 mb-4 md:grid-cols-5">
-        <div className="stat">
+      <div className="grid grid-cols-2 gap-3 mb-4 md:grid-cols-5">
+        <div className="stat col-span-1">
           <div className="stat-icon bg-red-50 text-red-600">
             <Coins size={20} strokeWidth={2} aria-hidden />
           </div>
           <span className="stat-label">Total Pengeluaran</span>
           <strong>{formatMoney(summary.total)}</strong>
         </div>
-        <div className="stat">
+        <div className="stat col-span-1">
           <div className="stat-icon bg-blue-50 text-blue-600">
             <Wallet size={20} strokeWidth={2} aria-hidden />
           </div>
           <span className="stat-label">Operasional Gudang</span>
           <strong>{formatMoney(summary.ops)}</strong>
         </div>
-        <div className="stat">
+        <div className="stat col-span-1">
           <div className="stat-icon bg-amber-50 text-amber-600">
             <Coins size={20} strokeWidth={2} aria-hidden />
           </div>
           <span className="stat-label">Biaya Iklan (Ads)</span>
           <strong>{formatMoney(summary.ads)}</strong>
         </div>
-        <div className="stat">
+        <div className="stat col-span-1">
           <div className="stat-icon bg-slate-50 text-slate-600">
             <Wallet size={20} strokeWidth={2} aria-hidden />
           </div>
           <span className="stat-label">Pengeluaran Lainnya</span>
           <strong>{formatMoney(summary.lain)}</strong>
         </div>
-        <div className="stat border-2 border-emerald-100 bg-emerald-50/20">
+        <div className="stat col-span-2 md:col-span-1 border-2 border-emerald-100 bg-emerald-50/20">
           <div className="stat-icon bg-emerald-50 text-emerald-600">
             <Coins size={20} strokeWidth={2} aria-hidden />
           </div>
@@ -457,7 +458,7 @@ export default function ExpensesPage() {
           <Filter size={18} strokeWidth={2} className="text-slate-500" aria-hidden />
           <span className="text-sm font-semibold text-slate-900">Filter Pencarian</span>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3.5">
           <div>
             <label>Kategori</label>
             <Select

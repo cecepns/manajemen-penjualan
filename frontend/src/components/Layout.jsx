@@ -26,7 +26,7 @@ const links = [
   { to: '/stock-history', label: 'History stok', Icon: History },
   { to: '/stores', label: 'Toko', Icon: Store },
   { to: '/kurir-gudang', label: 'Kurir gudang', Icon: Truck },
-  { to: '/expenses', label: 'Keuangan', ownerOnly: true, Icon: Wallet },
+  { to: '/expenses', label: 'Keuangan', ownerOrAdminOnly: true, Icon: Wallet },
   { to: '/users', label: 'User', ownerOnly: true, Icon: Users },
 ];
 
@@ -40,10 +40,15 @@ const navLinkDesktop = ({ isActive }) =>
 
 function SidebarContent({ user, isOwner, onLinkClick, headerLeading, onLogout }) {
   const r = user?.role;
+  const isOwnerOrAdmin = isOwner || r === 'admin';
   const visible =
     r === 'checker_pengiriman'
       ? links.filter((l) => l.to === '/kurir-gudang')
-      : links.filter((l) => !l.ownerOnly || isOwner);
+      : links.filter((l) => {
+          if (l.ownerOnly) return isOwner;
+          if (l.ownerOrAdminOnly) return isOwnerOrAdmin;
+          return true;
+        });
 
   return (
     <>

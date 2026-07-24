@@ -1846,28 +1846,34 @@ app.get('/api/dashboard', authRequired, staffExceptChecker, async (req, res) => 
       params
     );
 
-    const [labaDb] = await pool.query(
-      `SELECT SUM(
-        CASE
-          WHEN o.status = 'retur' THEN LEAST(0, IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot)
-          ELSE IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot
-        END
-      ) AS total_laba
-      FROM orders o
-      WHERE ${oWhereAliased}
-        AND (
-          o.status = 'retur'
-          OR EXISTS (
-            SELECT 1 FROM orders x
-            WHERE x.order_no = o.order_no
-              AND x.store_id = o.store_id
-              AND DATE(x.order_date) = DATE(o.order_date)
-              AND x.nominal_cair IS NOT NULL
-          )
-        )`,
+    // Overall nominal cair (revenue)
+    const [cairDb] = await pool.query(
+      `SELECT COALESCE(SUM(nominal_cair), 0) AS t FROM orders WHERE ${oWhere} AND nominal_cair IS NOT NULL`,
       params
     );
-    const labaBersih = Number(labaDb[0].total_laba) || 0;
+    const totalNominalCair = Number(cairDb[0].t) || 0;
+
+    // Overall modal cair (COGS)
+    const [modalCairDb] = await pool.query(
+      `SELECT COALESCE(SUM(o.qty * o.hpp_snapshot), 0) AS t
+       FROM orders o
+       WHERE ${oWhereAliased}
+         AND (
+           o.status = 'retur'
+           OR EXISTS (
+             SELECT 1 FROM orders x
+             WHERE x.order_no = o.order_no
+               AND x.store_id = o.store_id
+               AND DATE(x.order_date) = DATE(o.order_date)
+               AND x.nominal_cair IS NOT NULL
+           )
+         )`,
+      params
+    );
+    const totalModalCair = Number(modalCairDb[0].t) || 0;
+
+    const labaBersih = totalNominalCair - totalModalCair;
+
     // Overall expenses
     let expWhere = '1=1';
     const expParams = [];
@@ -1897,32 +1903,6 @@ app.get('/api/dashboard', authRequired, staffExceptChecker, async (req, res) => 
     const totalAds = Number(expSum[0].ads) || 0;
     const totalLain = Number(expSum[0].lain) || 0;
     const totalExpenses = totalOps + totalAds + totalLain;
-
-    // Overall nominal cair (revenue)
-    const [cairDb] = await pool.query(
-      `SELECT COALESCE(SUM(nominal_cair), 0) AS t FROM orders WHERE ${oWhere} AND nominal_cair IS NOT NULL`,
-      params
-    );
-    const totalNominalCair = Number(cairDb[0].t) || 0;
-
-    // Overall modal cair (COGS)
-    const [modalCairDb] = await pool.query(
-      `SELECT COALESCE(SUM(o.qty * o.hpp_snapshot), 0) AS t
-       FROM orders o
-       WHERE ${oWhereAliased}
-         AND (
-           o.status = 'retur'
-           OR EXISTS (
-             SELECT 1 FROM orders x
-             WHERE x.order_no = o.order_no
-               AND x.store_id = o.store_id
-               AND DATE(x.order_date) = DATE(o.order_date)
-               AND x.nominal_cair IS NOT NULL
-           )
-         )`,
-      params
-    );
-    const totalModalCair = Number(modalCairDb[0].t) || 0;
 
     const [stokSummary] = await pool.query(
       `SELECT
@@ -1990,28 +1970,24 @@ app.get('/api/dashboard', authRequired, staffExceptChecker, async (req, res) => 
            )`,
         pparams
       );
-      const [labaDbStore] = await pool.query(
-        `SELECT SUM(
-          CASE
-            WHEN o.status = 'retur' THEN LEAST(0, IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot)
-            ELSE IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot
-          END
-        ) AS total_laba
-        FROM orders o
-        WHERE ${owAliased}
-          AND (
-            o.status = 'retur'
-            OR EXISTS (
-              SELECT 1 FROM orders x
-              WHERE x.order_no = o.order_no
-                AND x.store_id = o.store_id
-                AND DATE(x.order_date) = DATE(o.order_date)
-                AND x.nominal_cair IS NOT NULL
-            )
-          )`,
+      const [modalCairStore] = await pool.query(
+        `SELECT COALESCE(SUM(o.qty * o.hpp_snapshot), 0) AS t
+         FROM orders o
+         WHERE ${owAliased}
+           AND (
+             o.status = 'retur'
+             OR EXISTS (
+               SELECT 1 FROM orders x
+               WHERE x.order_no = o.order_no
+                 AND x.store_id = o.store_id
+                 AND DATE(x.order_date) = DATE(o.order_date)
+                 AND x.nominal_cair IS NOT NULL
+             )
+           )`,
         pparams
       );
-      const laba = Number(labaDbStore[0].total_laba) || 0;
+      const storeModalCair = Number(modalCairStore[0].t) || 0;
+      const laba = Number(cairSum[0].t) - storeModalCair;
 
       // Store specific expenses
       let expw = 'store_id = ?';

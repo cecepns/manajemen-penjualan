@@ -88,7 +88,7 @@ function payoutLabel(row) {
 function labaForRow(row, totalOrderModal = null) {
   const modal = totalOrderModal != null ? Number(totalOrderModal) : Number(row.qty) * Number(row.hpp_snapshot);
   const nc = row.nominal_cair != null ? Number(row.nominal_cair) : null;
-  if (row.status === 'retur') return Math.min(0, (nc ?? 0) - (Number(row.qty) * Number(row.hpp_snapshot)));
+  if (row.status === 'retur') return Math.min(0, (nc ?? 0) - modal);
   if (nc == null) return null;
   return nc - modal;
 }
@@ -939,29 +939,47 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
       `SELECT o.*, s.name AS store_name FROM orders o
        JOIN stores s ON s.id = o.store_id
        LEFT JOIN products pr ON pr.id = o.product_id
-       WHERE ${where} ORDER BY o.order_date DESC, o.id DESC`,
+       WHERE ${where} ORDER BY o.order_date DESC, o.order_no ASC, o.id ASC`,
       params
     );
 
     // Group rows by order key to calculate total order modal for multi-item orders
     const orderTotals = new Map();
+    const orderNominals = new Map();
+    const firstRowIds = new Map();
     for (const r of rows) {
       const key = `${r.order_no}\0${r.store_id}\0${orderDateKeyDb(r.order_date)}`;
       const prevModal = orderTotals.get(key) || 0;
       orderTotals.set(key, prevModal + Number(r.qty) * Number(r.hpp_snapshot));
+      if (r.nominal_cair != null) {
+        orderNominals.set(key, Number(r.nominal_cair));
+      }
+      if (!firstRowIds.has(key)) {
+        firstRowIds.set(key, r.id);
+      }
     }
 
     const sheet = rows.map((o) => {
       const key = `${o.order_no}\0${o.store_id}\0${orderDateKeyDb(o.order_date)}`;
       const totalOrderModal = orderTotals.get(key) || 0;
       const modalThisRow = Number(o.qty) * Number(o.hpp_snapshot);
+      const groupNc = orderNominals.has(key) ? orderNominals.get(key) : null;
+      const isFirstRow = firstRowIds.get(key) === o.id;
+      const isSudahCair = groupNc != null;
 
+      let nominalCair = '';
       let laba = '';
-      if (o.status === 'retur') {
-        const nc = o.nominal_cair != null ? Number(o.nominal_cair) : 0;
-        laba = Math.min(0, nc - modalThisRow);
-      } else if (o.nominal_cair != null) {
-        laba = Number(o.nominal_cair) - totalOrderModal;
+
+      if (isFirstRow) {
+        if (isSudahCair) {
+          nominalCair = groupNc;
+        }
+        if (o.status === 'retur') {
+          const nc = isSudahCair ? groupNc : 0;
+          laba = Math.min(0, nc - totalOrderModal);
+        } else if (isSudahCair) {
+          laba = groupNc - totalOrderModal;
+        }
       }
 
       return {
@@ -976,8 +994,8 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
         Toko: o.store_name,
         Tanggal: orderDateKeyDb(o.order_date),
         Status: o.status,
-        NominalCair: o.nominal_cair,
-        StatusCair: o.nominal_cair == null ? 'Belum Cair' : 'Sudah Cair',
+        NominalCair: nominalCair,
+        StatusCair: isSudahCair ? 'Sudah Cair' : 'Belum Cair',
         Laba: laba,
       };
     });
@@ -1183,12 +1201,9 @@ app.get('/api/orders', authRequired, staffExceptChecker, async (req, res) => {
            WHEN SUM(CASE WHEN o.nominal_cair IS NOT NULL THEN 1 ELSE 0 END) = 0
              AND SUM(CASE WHEN o.status = 'retur' THEN 1 ELSE 0 END) = 0
              THEN NULL
-           ELSE SUM(
-             CASE
-               WHEN o.status = 'retur' THEN LEAST(0, IFNULL(o.nominal_cair,0) - o.qty * o.hpp_snapshot)
-               ELSE IFNULL(o.nominal_cair, 0) - o.qty * o.hpp_snapshot
-             END
-           )
+           WHEN SUM(CASE WHEN o.status = 'retur' THEN 1 ELSE 0 END) > 0
+             THEN LEAST(0, IFNULL(MAX(o.nominal_cair), 0) - SUM(o.qty * o.hpp_snapshot))
+           ELSE MAX(o.nominal_cair) - SUM(o.qty * o.hpp_snapshot)
          END AS laba
        FROM orders o
        JOIN stores s ON s.id = o.store_id

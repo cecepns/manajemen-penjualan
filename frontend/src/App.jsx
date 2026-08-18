@@ -13,6 +13,8 @@ import StoresPage from './pages/StoresPage.jsx';
 import UsersPage from './pages/UsersPage.jsx';
 import WarehouseCourierPage from './pages/WarehouseCourierPage.jsx';
 import ExpensesPage from './pages/ExpensesPage.jsx';
+import StatusOnlinePage from './pages/StatusOnlinePage.jsx';
+import ActivityLogPage from './pages/ActivityLogPage.jsx';
 
 function PrivateRoute({ children }) {
   const { user, ready } = useAuth();
@@ -25,6 +27,12 @@ function PrivateRoute({ children }) {
     );
   }
   if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
+
+function OwnerRoute({ children }) {
+  const { isOwner } = useAuth();
+  if (!isOwner) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -57,6 +65,15 @@ export default function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="kurir-gudang" element={<WarehouseCourierPage />} />
         <Route path="expenses" element={<ExpensesPage />} />
+        <Route path="status-online" element={<StatusOnlinePage />} />
+        <Route
+          path="activity-log"
+          element={
+            <OwnerRoute>
+              <ActivityLogPage />
+            </OwnerRoute>
+          }
+        />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

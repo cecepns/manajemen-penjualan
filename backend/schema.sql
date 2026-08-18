@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(191) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   role ENUM('owner', 'admin', 'karyawan', 'checker_pengiriman') NOT NULL DEFAULT 'karyawan',
+  last_active_at DATETIME DEFAULT NULL,
+  last_login_at DATETIME DEFAULT NULL,
+  last_logout_at DATETIME DEFAULT NULL,
+  is_online TINYINT(1) NOT NULL DEFAULT 0,
+  session_start_at DATETIME DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_users_email (email)
 ) ENGINE=InnoDB;
@@ -130,6 +135,29 @@ CREATE TABLE IF NOT EXISTS incomes (
   CONSTRAINT fk_incomes_user FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
   KEY idx_incomes_category (category),
   KEY idx_incomes_date (income_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  user_id INT UNSIGNED DEFAULT NULL,
+  user_name VARCHAR(191) NOT NULL,
+  user_role VARCHAR(50) NOT NULL,
+  action VARCHAR(100) NOT NULL,
+  entity_type VARCHAR(50) NOT NULL,
+  entity_id VARCHAR(100) DEFAULT NULL,
+  reference VARCHAR(255) DEFAULT NULL,
+  description TEXT NOT NULL,
+  before_data LONGTEXT DEFAULT NULL,
+  after_data LONGTEXT DEFAULT NULL,
+  ip_address VARCHAR(100) DEFAULT NULL,
+  user_agent VARCHAR(255) DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_activity_logs_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL,
+  KEY idx_activity_logs_user (user_id),
+  KEY idx_activity_logs_entity (entity_type),
+  KEY idx_activity_logs_action (action),
+  KEY idx_activity_logs_created_at (created_at),
+  KEY idx_activity_logs_ref (reference)
 ) ENGINE=InnoDB;
 
 

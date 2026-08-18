@@ -43,9 +43,17 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener('mp:unauthorized', onUnauth);
   }, []);
 
-  const logout = useCallback(() => {
-    setToken(null);
-    setUser(null);
+  const logout = useCallback(async () => {
+    try {
+      if (getToken()) {
+        await api.post('/api/auth/logout');
+      }
+    } catch {
+      // ignore
+    } finally {
+      setToken(null);
+      setUser(null);
+    }
   }, []);
 
   const value = useMemo(() => {

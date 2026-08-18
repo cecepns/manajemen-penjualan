@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Activity,
   ClipboardList,
   History,
   LayoutDashboard,
@@ -8,6 +9,7 @@ import {
   Menu,
   Package,
   PackagePlus,
+  Radio,
   ShoppingCart,
   Store,
   Truck,
@@ -16,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useHeartbeat } from '../hooks/useHeartbeat.js';
 
 const links = [
   { to: '/', label: 'Dashboard', end: true, Icon: LayoutDashboard },
@@ -28,6 +31,8 @@ const links = [
   { to: '/kurir-gudang', label: 'Kurir gudang', Icon: Truck },
   { to: '/expenses', label: 'Keuangan', ownerOrAdminOnly: true, Icon: Wallet },
   { to: '/users', label: 'User', ownerOnly: true, Icon: Users },
+  { to: '/status-online', label: 'Status Online', Icon: Radio, isStatusOnline: true },
+  { to: '/activity-log', label: 'Activity Log', ownerOnly: true, Icon: Activity },
 ];
 
 const navLinkDesktop = ({ isActive }) =>
@@ -43,7 +48,7 @@ function SidebarContent({ user, isOwner, onLinkClick, headerLeading, onLogout })
   const isOwnerOrAdmin = isOwner || r === 'admin';
   const visible =
     r === 'checker_pengiriman'
-      ? links.filter((l) => l.to === '/kurir-gudang')
+      ? links.filter((l) => l.to === '/kurir-gudang' || l.to === '/status-online')
       : links.filter((l) => {
           if (l.ownerOnly) return isOwner;
           if (l.ownerOrAdminOnly) return isOwnerOrAdmin;
@@ -57,7 +62,9 @@ function SidebarContent({ user, isOwner, onLinkClick, headerLeading, onLogout })
         <Store size={22} strokeWidth={2.25} className="shrink-0 text-blue-400" aria-hidden />
         <span className="min-w-0 truncate">Penjualan MP</span>
       </div>
-      {visible.map(({ to, label, end, Icon }) => (
+
+      <div className="flex flex-col gap-1 overflow-y-auto pr-1">
+        {visible.map(({ to, label, end, Icon, isStatusOnline }) => (
           <NavLink
             key={to}
             to={to}
@@ -65,10 +72,17 @@ function SidebarContent({ user, isOwner, onLinkClick, headerLeading, onLogout })
             className={navLinkDesktop}
             onClick={() => onLinkClick?.()}
           >
-            <Icon size={20} strokeWidth={2} className="shrink-0 opacity-90" aria-hidden />
-            {label}
+            <div className="relative shrink-0">
+              <Icon size={20} strokeWidth={2} className="opacity-90" aria-hidden />
+              {isStatusOnline && (
+                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              )}
+            </div>
+            <span>{label}</span>
           </NavLink>
         ))}
+      </div>
+
       <div className="mt-auto border-t border-slate-700/70 px-2.5 pt-4 text-sm">
         <span className="mb-0.5 block font-semibold text-slate-100">{user?.name}</span>
         <span className="text-xs capitalize text-slate-500">
@@ -92,6 +106,7 @@ function SidebarContent({ user, isOwner, onLinkClick, headerLeading, onLogout })
 
 export default function Layout() {
   const { user, logout, isOwner } = useAuth();
+  useHeartbeat(!!user);
   const nav = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);

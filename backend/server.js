@@ -110,6 +110,62 @@ function orderDateKeyDb(v) {
   return s.slice(0, 10);
 }
 
+async function ensureTablesAndSchema() {
+  try {
+    // 1. Tabel activity_logs: WHO -> WHAT -> WHEN -> BEFORE -> AFTER -> REFERENCE
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS activity_logs (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        user_id INT UNSIGNED DEFAULT NULL,
+        user_name VARCHAR(191) NOT NULL,
+        user_role VARCHAR(50) NOT NULL,
+        action VARCHAR(100) NOT NULL,
+        entity_type VARCHAR(50) NOT NULL,
+        entity_id VARCHAR(100) DEFAULT NULL,
+        reference VARCHAR(255) DEFAULT NULL,
+        description TEXT NOT NULL,
+        before_data LONGTEXT DEFAULT NULL,
+        after_data LONGTEXT DEFAULT NULL,
+        ip_address VARCHAR(100) DEFAULT NULL,
+        user_agent VARCHAR(255) DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT fk_activity_logs_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL,
+        KEY idx_activity_logs_user (user_id),
+        KEY idx_activity_logs_entity (entity_type),
+        KEY idx_activity_logs_action (action),
+        KEY idx_activity_logs_created_at (created_at),
+        KEY idx_activity_logs_ref (reference)
+      ) ENGINE=InnoDB;
+    `);
+
+    // 2. Kolom status online pada tabel users jika belum ada
+    const [existingCols] = await pool.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
+    `);
+    const colSet = new Set(existingCols.map((c) => c.COLUMN_NAME));
+
+    if (!colSet.has('last_active_at')) {
+      await pool.query('ALTER TABLE users ADD COLUMN last_active_at DATETIME DEFAULT NULL');
+    }
+    if (!colSet.has('last_login_at')) {
+      await pool.query('ALTER TABLE users ADD COLUMN last_login_at DATETIME DEFAULT NULL');
+    }
+    if (!colSet.has('last_logout_at')) {
+      await pool.query('ALTER TABLE users ADD COLUMN last_logout_at DATETIME DEFAULT NULL');
+    }
+    if (!colSet.has('is_online')) {
+      await pool.query('ALTER TABLE users ADD COLUMN is_online TINYINT(1) NOT NULL DEFAULT 0');
+    }
+    if (!colSet.has('session_start_at')) {
+      await pool.query('ALTER TABLE users ADD COLUMN session_start_at DATETIME DEFAULT NULL');
+    }
+  } catch (err) {
+    console.error('Error ensuring tables/schema:', err.message);
+  }
+}
+
 async function ensureDefaultAdmin() {
   const [rows] = await pool.query('SELECT id FROM users LIMIT 1');
   if (rows.length) return;
@@ -121,12 +177,89 @@ async function ensureDefaultAdmin() {
   console.log('Default owner dibuat: admin@local.test / admin123');
 }
 
+ensureTablesAndSchema().catch(console.error);
+ensureDefaultAdmin().catch(console.error);
+
+/** Helper pencatat aktivitas WHO -> WHAT -> WHEN -> BEFORE -> AFTER -> REFERENCE */
+async function logActivity({
+  req = null,
+  userId = null,
+  userName = null,
+  userRole = null,
+  action,
+  entityType,
+  entityId = null,
+  reference = null,
+  description,
+  beforeData = null,
+  afterData = null,
+}) {
+  try {
+    const uid = userId ?? req?.user?.id ?? null;
+    const uname = userName ?? req?.user?.name ?? 'Sistem';
+    const urole = userRole ?? req?.user?.role ?? 'system';
+
+    const beforeStr =
+      beforeData != null
+        ? typeof beforeData === 'string'
+          ? beforeData
+          : JSON.stringify(beforeData)
+        : null;
+    const afterStr =
+      afterData != null
+        ? typeof afterData === 'string'
+          ? afterData
+          : JSON.stringify(afterData)
+        : null;
+    const ip = req
+      ? (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').slice(0, 100)
+      : null;
+    const ua = req ? (req.headers['user-agent'] || '').slice(0, 255) : null;
+
+    await pool.query(
+      `INSERT INTO activity_logs 
+       (user_id, user_name, user_role, action, entity_type, entity_id, reference, description, before_data, after_data, ip_address, user_agent)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uid,
+        uname,
+        urole,
+        action,
+        entityType,
+        entityId != null ? String(entityId) : null,
+        reference != null ? String(reference) : null,
+        description,
+        beforeStr,
+        afterStr,
+        ip,
+        ua,
+      ]
+    );
+
+    if (uid) {
+      await pool.query(
+        'UPDATE users SET last_active_at = NOW(), is_online = 1 WHERE id = ?',
+        [uid]
+      ).catch(() => {});
+    }
+  } catch (e) {
+    console.error('Gagal mencatat log aktivitas:', e);
+  }
+}
+
 function authRequired(req, res, next) {
   const h = req.headers.authorization;
   const token = h?.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return res.status(401).json({ message: 'Unauthorized' });
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    if (req.user?.id) {
+      pool
+        .query('UPDATE users SET last_active_at = NOW(), is_online = 1 WHERE id = ?', [
+          req.user.id,
+        ])
+        .catch(() => {});
+    }
     next();
   } catch {
     return res.status(401).json({ message: 'Token tidak valid' });
@@ -154,6 +287,7 @@ function ownerOnly(req, res, next) {
   next();
 }
 
+/* ——— Auth Routes ——— */
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -166,11 +300,37 @@ app.post('/api/auth/login', async (req, res) => {
     const u = users[0];
     if (!u || !(await bcrypt.compare(password, u.password_hash)))
       return res.status(401).json({ message: 'Email atau password salah' });
+    
     const token = jwt.sign(
       { id: u.id, email: u.email, role: u.role, name: u.name },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
+
+    await pool.query(
+      `UPDATE users 
+       SET is_online = 1, 
+           last_login_at = NOW(), 
+           last_active_at = NOW(), 
+           session_start_at = NOW() 
+       WHERE id = ?`,
+      [u.id]
+    ).catch(() => {});
+
+    await logActivity({
+      req,
+      userId: u.id,
+      userName: u.name,
+      userRole: u.role,
+      action: 'LOGIN',
+      entityType: 'auth',
+      entityId: u.id,
+      reference: u.email,
+      description: `User ${u.name} berhasil login ke dalam sistem`,
+      beforeData: null,
+      afterData: { status: 'Online', role: u.role },
+    });
+
     res.json({
       token,
       user: { id: u.id, name: u.name, email: u.email, role: u.role },
@@ -181,12 +341,312 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.post('/api/auth/logout', authRequired, async (req, res) => {
+  try {
+    const uid = req.user?.id;
+    if (uid) {
+      await pool.query(
+        `UPDATE users 
+         SET is_online = 0, 
+             last_logout_at = NOW(), 
+             last_active_at = NOW() 
+         WHERE id = ?`,
+        [uid]
+      ).catch(() => {});
+
+      await logActivity({
+        req,
+        userId: uid,
+        userName: req.user.name,
+        userRole: req.user.role,
+        action: 'LOGOUT',
+        entityType: 'auth',
+        entityId: uid,
+        reference: req.user.email,
+        description: `User ${req.user.name} logout dari sistem`,
+        beforeData: { status: 'Online' },
+        afterData: { status: 'Offline' },
+      });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Logout error:', e);
+    res.status(500).json({ message: 'Gagal logout' });
+  }
+});
+
 app.get('/api/auth/me', authRequired, async (req, res) => {
   const [rows] = await pool.query(
-    'SELECT id, name, email, role FROM users WHERE id = ?',
+    'SELECT id, name, email, role, last_active_at, last_login_at, is_online FROM users WHERE id = ?',
     [req.user.id]
   );
   res.json(rows[0] || null);
+});
+
+/* ——— User Online Status & Heartbeat ——— */
+app.post('/api/user-status/heartbeat', authRequired, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    await pool.query(
+      `UPDATE users 
+       SET is_online = 1, 
+           last_active_at = NOW(),
+           session_start_at = COALESCE(session_start_at, NOW())
+       WHERE id = ?`,
+      [uid]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Heartbeat error:', e);
+    res.status(500).json({ message: 'Gagal update heartbeat' });
+  }
+});
+
+app.get('/api/user-status/online-users', authRequired, async (req, res) => {
+  try {
+    const { search = '', role = '', status = '', page = 1, limit = 10 } = req.query;
+    const { page: p, limit: l, offset } = paginate(page, limit);
+
+    const [allUsers] = await pool.query(`
+      SELECT 
+        id, name, email, role,
+        last_active_at, last_login_at, last_logout_at, is_online, session_start_at,
+        TIMESTAMPDIFF(SECOND, last_active_at, NOW()) AS seconds_since_active,
+        TIMESTAMPDIFF(SECOND, session_start_at, NOW()) AS current_session_seconds,
+        TIMESTAMPDIFF(SECOND, session_start_at, last_logout_at) AS last_session_seconds,
+        (DATE(last_active_at) = CURDATE() OR DATE(last_login_at) = CURDATE()) AS is_active_today
+      FROM users
+      ORDER BY 
+        CASE 
+          WHEN is_online = 1 AND TIMESTAMPDIFF(SECOND, last_active_at, NOW()) <= 300 THEN 1
+          WHEN is_online = 1 AND TIMESTAMPDIFF(SECOND, last_active_at, NOW()) <= 900 THEN 2
+          ELSE 3
+        END ASC,
+        last_active_at DESC
+    `);
+
+    function formatDuration(totalSeconds) {
+      if (!totalSeconds || totalSeconds < 0) return '00:00:00';
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      return [
+        String(hours).padStart(2, '0'),
+        String(minutes).padStart(2, '0'),
+        String(seconds).padStart(2, '0'),
+      ].join(':');
+    }
+
+    let onlineCount = 0;
+    let idleCount = 0;
+    let offlineCount = 0;
+    let activeTodayCount = 0;
+
+    const mapped = allUsers.map((u) => {
+      const sec = u.seconds_since_active;
+      let userStatus = 'offline';
+      if (u.is_online && sec !== null && sec <= 300) {
+        userStatus = 'online';
+      } else if (u.is_online && sec !== null && sec <= 900) {
+        userStatus = 'idle';
+      } else {
+        userStatus = 'offline';
+      }
+
+      if (userStatus === 'online') onlineCount++;
+      else if (userStatus === 'idle') idleCount++;
+      else offlineCount++;
+
+      if (u.is_active_today) activeTodayCount++;
+
+      let sessionDurationSeconds = 0;
+      if (userStatus === 'online' || userStatus === 'idle') {
+        sessionDurationSeconds = u.current_session_seconds || 0;
+      } else {
+        if (u.last_session_seconds && u.last_session_seconds > 0) {
+          sessionDurationSeconds = u.last_session_seconds;
+        } else if (u.session_start_at && u.last_active_at) {
+          const diff = Math.floor(
+            (new Date(u.last_active_at) - new Date(u.session_start_at)) / 1000
+          );
+          sessionDurationSeconds = diff > 0 ? diff : 0;
+        }
+      }
+
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        status: userStatus,
+        last_active_at: u.last_active_at,
+        last_login_at: u.last_login_at,
+        last_logout_at: u.last_logout_at,
+        session_duration: formatDuration(sessionDurationSeconds),
+        session_seconds: sessionDurationSeconds,
+      };
+    });
+
+    let filtered = mapped;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      filtered = filtered.filter(
+        (u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
+      );
+    }
+    if (role.trim()) {
+      filtered = filtered.filter((u) => u.role === role);
+    }
+    if (status.trim()) {
+      filtered = filtered.filter((u) => u.status === status);
+    }
+
+    const total = filtered.length;
+    const data = filtered.slice(offset, offset + l);
+
+    res.json({
+      summary: {
+        online: onlineCount,
+        idle: idleCount,
+        offline: offlineCount,
+        total_user: allUsers.length,
+        active_today: activeTodayCount,
+      },
+      data,
+      page: p,
+      limit: l,
+      total,
+    });
+  } catch (e) {
+    console.error('Error getting online users:', e);
+    res.status(500).json({ message: 'Gagal memuat status user' });
+  }
+});
+
+/* ——— Activity Logs (Owner Only) ——— */
+app.get('/api/activity-logs', authRequired, staffExceptChecker, ownerOnly, async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 15,
+      search = '',
+      user_id = '',
+      entity_type = '',
+      action = '',
+      start_date = '',
+      end_date = '',
+    } = req.query;
+
+    const { page: p, limit: l, offset } = paginate(page, limit);
+
+    const conditions = ['1=1'];
+    const params = [];
+
+    if (search && search.trim()) {
+      const q = `%${search.trim()}%`;
+      conditions.push('(al.description LIKE ? OR al.reference LIKE ? OR al.user_name LIKE ?)');
+      params.push(q, q, q);
+    }
+
+    if (user_id) {
+      conditions.push('al.user_id = ?');
+      params.push(user_id);
+    }
+
+    if (entity_type) {
+      conditions.push('al.entity_type = ?');
+      params.push(entity_type);
+    }
+
+    if (action) {
+      conditions.push('al.action = ?');
+      params.push(action);
+    }
+
+    if (start_date) {
+      conditions.push('DATE(al.created_at) >= ?');
+      params.push(start_date);
+    }
+
+    if (end_date) {
+      conditions.push('DATE(al.created_at) <= ?');
+      params.push(end_date);
+    }
+
+    const whereClause = conditions.join(' AND ');
+
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS total FROM activity_logs al WHERE ${whereClause}`,
+      params
+    );
+    const total = countRows[0].total;
+
+    const [rows] = await pool.query(
+      `SELECT 
+        al.id, al.user_id, al.user_name, al.user_role, al.action, al.entity_type, 
+        al.entity_id, al.reference, al.description, al.before_data, al.after_data, 
+        al.ip_address, al.user_agent, al.created_at
+       FROM activity_logs al
+       WHERE ${whereClause}
+       ORDER BY al.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, l, offset]
+    );
+
+    const parsedRows = rows.map((r) => {
+      let before = r.before_data;
+      let after = r.after_data;
+      try {
+        if (before && (before.startsWith('{') || before.startsWith('['))) {
+          before = JSON.parse(before);
+        }
+      } catch {}
+      try {
+        if (after && (after.startsWith('{') || after.startsWith('['))) {
+          after = JSON.parse(after);
+        }
+      } catch {}
+      return {
+        ...r,
+        before_parsed: before,
+        after_parsed: after,
+      };
+    });
+
+    res.json({
+      data: parsedRows,
+      page: p,
+      limit: l,
+      total,
+    });
+  } catch (e) {
+    console.error('Error fetching activity logs:', e);
+    res.status(500).json({ message: 'Gagal memuat activity log' });
+  }
+});
+
+app.get('/api/activity-logs/:id', authRequired, staffExceptChecker, ownerOnly, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM activity_logs WHERE id = ?', [
+      req.params.id,
+    ]);
+    if (!rows.length) return res.status(404).json({ message: 'Log tidak ditemukan' });
+    const log = rows[0];
+    try {
+      if (log.before_data && (log.before_data.startsWith('{') || log.before_data.startsWith('['))) {
+        log.before_parsed = JSON.parse(log.before_data);
+      }
+    } catch {}
+    try {
+      if (log.after_data && (log.after_data.startsWith('{') || log.after_data.startsWith('['))) {
+        log.after_parsed = JSON.parse(log.after_data);
+      }
+    } catch {}
+    res.json(log);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat detail log' });
+  }
 });
 
 /* ——— Stores ——— */
@@ -218,6 +678,18 @@ app.post('/api/stores', authRequired, staffExceptChecker, ownerOrAdmin, async (r
     const [r] = await pool.query('INSERT INTO stores (name) VALUES (?)', [
       name.trim(),
     ]);
+
+    await logActivity({
+      req,
+      action: 'CREATE_STORE',
+      entityType: 'stores',
+      entityId: r.insertId,
+      reference: name.trim(),
+      description: `Menambahkan toko baru: ${name.trim()}`,
+      beforeData: null,
+      afterData: { id: r.insertId, name: name.trim() },
+    });
+
     res.status(201).json({ id: r.insertId, name: name.trim() });
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY')
@@ -231,10 +703,26 @@ app.put('/api/stores/:id', authRequired, staffExceptChecker, ownerOrAdmin, async
   try {
     const { name } = req.body || {};
     if (!name?.trim()) return res.status(400).json({ message: 'Nama toko wajib' });
+
+    const [oldRows] = await pool.query('SELECT * FROM stores WHERE id = ?', [req.params.id]);
+    const oldStore = oldRows[0];
+
     await pool.query('UPDATE stores SET name = ? WHERE id = ?', [
       name.trim(),
       req.params.id,
     ]);
+
+    await logActivity({
+      req,
+      action: 'UPDATE_STORE',
+      entityType: 'stores',
+      entityId: req.params.id,
+      reference: name.trim(),
+      description: `Mengubah nama toko dari "${oldStore?.name || ''}" menjadi "${name.trim()}"`,
+      beforeData: { name: oldStore?.name },
+      afterData: { name: name.trim() },
+    });
+
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -244,7 +732,22 @@ app.put('/api/stores/:id', authRequired, staffExceptChecker, ownerOrAdmin, async
 
 app.delete('/api/stores/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
   try {
+    const [oldRows] = await pool.query('SELECT * FROM stores WHERE id = ?', [req.params.id]);
+    const oldStore = oldRows[0];
+
     await pool.query('DELETE FROM stores WHERE id = ?', [req.params.id]);
+
+    await logActivity({
+      req,
+      action: 'DELETE_STORE',
+      entityType: 'stores',
+      entityId: req.params.id,
+      reference: oldStore?.name || `ID #${req.params.id}`,
+      description: `Menghapus toko "${oldStore?.name || ''}"`,
+      beforeData: oldStore,
+      afterData: null,
+    });
+
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -344,6 +847,18 @@ app.post('/api/products/:id/stock-in', authRequired, staffExceptChecker, async (
     );
 
     await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'STOCK_IN',
+      entityType: 'products',
+      entityId: req.params.id,
+      reference: current.name || `ID #${req.params.id}`,
+      description: `Menambahkan stok masuk sebanyak +${added} pcs (Stok: ${before} → ${after})`,
+      beforeData: { stock: before },
+      afterData: { stock: after, added, notes: notes?.trim() || null },
+    });
+
     res.status(201).json({ ok: true, qty_before: before, qty_after: after });
   } catch (e) {
     await conn.rollback();
@@ -418,6 +933,17 @@ app.post('/api/stock-audit', authRequired, staffExceptChecker, async (req, res) 
     }
 
     await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'STOCK_AUDIT',
+      entityType: 'products',
+      reference: `Audit ${auditDate}`,
+      description: `Melakukan audit stok fisik untuk ${changed} item produk (Tgl: ${auditDate})`,
+      beforeData: null,
+      afterData: { total_items: changed, notes: sessionNotes, audit_date: auditDate },
+    });
+
     res.status(201).json({ ok: true, rows: changed });
   } catch (e) {
     await conn.rollback();
@@ -633,6 +1159,24 @@ app.post('/api/products', authRequired, staffExceptChecker, productPhotoUploadMa
         photoPath,
       ]
     );
+
+    await logActivity({
+      req,
+      action: 'CREATE_PRODUCT',
+      entityType: 'products',
+      entityId: r.insertId,
+      reference: barcode?.trim() || name.trim(),
+      description: `Menambahkan produk baru "${name.trim()}" (Stok awal: ${Number(stock) || 0})`,
+      beforeData: null,
+      afterData: {
+        id: r.insertId,
+        name: name.trim(),
+        barcode: barcode?.trim() || null,
+        hpp: Number(hpp) || 0,
+        stock: Number(stock) || 0,
+      },
+    });
+
     res.status(201).json({ id: r.insertId });
   } catch (e) {
     if (req.file) removeUploadedFile(req.file.path);
@@ -652,7 +1196,7 @@ app.put('/api/products/:id', authRequired, staffExceptChecker, productPhotoUploa
 
     await conn.beginTransaction();
     const [prows] = await conn.query(
-      'SELECT id, stock, photo_url, hpp FROM products WHERE id = ? FOR UPDATE',
+      'SELECT id, name, barcode, stock, photo_url, hpp FROM products WHERE id = ? FOR UPDATE',
       [req.params.id]
     );
     const current = prows[0];
@@ -697,6 +1241,28 @@ app.put('/api/products/:id', authRequired, staffExceptChecker, productPhotoUploa
     }
 
     await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'UPDATE_PRODUCT',
+      entityType: 'products',
+      entityId: req.params.id,
+      reference: barcode?.trim() || name.trim(),
+      description: `Mengubah data produk "${name.trim()}" (Stok: ${current.stock} → ${nextStock})`,
+      beforeData: {
+        name: current.name,
+        barcode: current.barcode,
+        hpp: current.hpp,
+        stock: current.stock,
+      },
+      afterData: {
+        name: name.trim(),
+        barcode: barcode?.trim() || null,
+        hpp: nextHpp,
+        stock: nextStock,
+      },
+    });
+
     if (
       (req.file || shouldRemovePhoto) &&
       current.photo_url &&
@@ -718,13 +1284,25 @@ app.put('/api/products/:id', authRequired, staffExceptChecker, productPhotoUploa
 app.delete('/api/products/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT photo_url FROM products WHERE id = ? LIMIT 1',
+      'SELECT name, barcode, photo_url, stock, hpp FROM products WHERE id = ? LIMIT 1',
       [req.params.id]
     );
     const product = rows[0];
     if (!product) return res.status(404).json({ message: 'Produk tidak ada' });
 
     await pool.query('DELETE FROM products WHERE id = ?', [req.params.id]);
+
+    await logActivity({
+      req,
+      action: 'DELETE_PRODUCT',
+      entityType: 'products',
+      entityId: req.params.id,
+      reference: product.barcode || product.name,
+      description: `Menghapus produk "${product.name}"`,
+      beforeData: product,
+      afterData: null,
+    });
+
     if (product.photo_url && product.photo_url.startsWith('/uploads/')) {
       removeUploadedFile(path.join(UPLOAD_DIR, path.basename(product.photo_url)));
     }
@@ -1053,6 +1631,18 @@ app.post('/api/orders/mark-dikirim', authRequired, async (req, res) => {
       `UPDATE orders SET status = 'dikirim' WHERE id IN (${ids.map(() => '?').join(',')})`,
       ids
     );
+
+    await logActivity({
+      req,
+      action: 'UPDATE_ORDER_STATUS',
+      entityType: 'orders',
+      entityId: groupRows[0].id,
+      reference: groupRows[0].order_no,
+      description: `Mengubah status pengiriman pesanan (${groupRows[0].order_no}) menjadi "Dikirim" (Scan/Input: ${code})`,
+      beforeData: { status: 'diproses' },
+      afterData: { status: 'dikirim' },
+    });
+
     res.json({
       ok: true,
       order_no: groupRows[0].order_no,
@@ -1378,6 +1968,25 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
         }
       }
       await conn.commit();
+
+      await logActivity({
+        req,
+        action: 'CREATE_ORDER',
+        entityType: 'orders',
+        entityId: ids[0],
+        reference: order_no.trim(),
+        description: `Membuat pesanan baru (${order_no.trim()}) dengan ${items.length} produk - status: "${stat}"`,
+        beforeData: null,
+        afterData: {
+          order_no: order_no.trim(),
+          resi,
+          status: stat,
+          order_date,
+          total_items: items.length,
+          nominal_cair: gnom,
+        },
+      });
+
       return res.status(201).json({ ids, count: ids.length });
     }
 
@@ -1458,6 +2067,25 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
     }
 
     await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'CREATE_ORDER',
+      entityType: 'orders',
+      entityId: ins.insertId,
+      reference: order_no.trim(),
+      description: `Membuat pesanan baru (${order_no.trim()}) - ${product_name.trim()}`,
+      beforeData: null,
+      afterData: {
+        order_no: order_no.trim(),
+        product_name: product_name.trim(),
+        qty,
+        selling_price: Number(body.selling_price) || 0,
+        status: stat,
+        nominal_cair,
+      },
+    });
+
     res.status(201).json({ id: ins.insertId });
   } catch (e) {
     await conn.rollback();
@@ -1626,6 +2254,43 @@ app.put('/api/orders/group', authRequired, staffExceptChecker, async (req, res) 
     }
 
     await conn.commit();
+
+    const oldStat = sorted[0]?.status;
+    const oldNominal = sorted.find((r) => r.nominal_cair != null)?.nominal_cair;
+    let actionType = 'UPDATE_ORDER';
+    let desc = `Mengubah data pesanan (${order_no.trim()})`;
+
+    if (oldStat !== stat) {
+      desc = `Mengubah status pesanan (${order_no.trim()}) dari "${oldStat}" menjadi "${stat}"`;
+    }
+    const gnomVal =
+      body.nominal_cair === '' || body.nominal_cair == null || body.nominal_cair === undefined
+        ? null
+        : Number(body.nominal_cair);
+    if (oldNominal !== gnomVal && gnomVal !== null) {
+      actionType = 'UPDATE_STATUS_WD';
+      desc = `Mengubah status pencairan/WD pesanan (${order_no.trim()}) menjadi Rp ${gnomVal.toLocaleString('id-ID')}`;
+    }
+
+    await logActivity({
+      req,
+      action: actionType,
+      entityType: 'orders',
+      entityId: ids[0],
+      reference: order_no.trim(),
+      description: desc,
+      beforeData: {
+        status: oldStat,
+        nominal_cair: oldNominal != null ? Number(oldNominal) : null,
+        resi: sorted[0]?.resi,
+      },
+      afterData: {
+        status: stat,
+        nominal_cair: gnomVal,
+        resi,
+      },
+    });
+
     res.json({ ok: true, ids, count: ids.length });
   } catch (e) {
     await conn.rollback();
@@ -1765,6 +2430,41 @@ app.put('/api/orders/:id', authRequired, staffExceptChecker, async (req, res) =>
     );
 
     await conn.commit();
+
+    const oldStat = prev.status;
+    const oldNominal = prev.nominal_cair;
+    let actionType = 'UPDATE_ORDER';
+    let desc = `Mengubah data pesanan (${order_no_m})`;
+
+    if (oldStat !== stat) {
+      desc = `Mengubah status pesanan (${order_no_m}) dari "${oldStat}" menjadi "${stat}"`;
+    }
+    if (oldNominal !== nominal_cair && nominal_cair !== null) {
+      actionType = 'UPDATE_STATUS_WD';
+      desc = `Mengubah nominal pencairan/WD pesanan (${order_no_m}) menjadi Rp ${Number(nominal_cair).toLocaleString('id-ID')}`;
+    }
+
+    await logActivity({
+      req,
+      action: actionType,
+      entityType: 'orders',
+      entityId: req.params.id,
+      reference: order_no_m,
+      description: desc,
+      beforeData: {
+        product_name: prev.product_name,
+        status: oldStat,
+        nominal_cair: oldNominal != null ? Number(oldNominal) : null,
+        resi: prev.resi,
+      },
+      afterData: {
+        product_name: product_name_m,
+        status: stat,
+        nominal_cair,
+        resi: body.resi !== undefined ? body.resi : prev.resi,
+      },
+    });
+
     res.json({ ok: true });
   } catch (e) {
     await conn.rollback();
@@ -1800,6 +2500,23 @@ app.delete('/api/orders/:id', authRequired, staffExceptChecker, ownerOnly, async
       ids
     );
     await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'DELETE_ORDER',
+      entityType: 'orders',
+      entityId: req.params.id,
+      reference: prev.order_no,
+      description: `Menghapus pesanan (${prev.order_no}) - ${prev.product_name}`,
+      beforeData: {
+        order_no: prev.order_no,
+        product_name: prev.product_name,
+        status: prev.status,
+        qty: prev.qty,
+      },
+      afterData: null,
+    });
+
     res.json({ ok: true, deleted: ids.length });
   } catch (e) {
     await conn.rollback();
@@ -2086,10 +2803,11 @@ app.put('/api/users/:id', authRequired, staffExceptChecker, ownerOnly, async (re
     return res.status(400).json({ message: 'Tidak bisa mengubah role akun sendiri' });
 
   const [existing] = await pool.query(
-    'SELECT id, email FROM users WHERE id = ? LIMIT 1',
+    'SELECT id, name, email, role FROM users WHERE id = ? LIMIT 1',
     [req.params.id]
   );
   if (!existing[0]) return res.status(404).json({ message: 'User tidak ditemukan' });
+  const oldUser = existing[0];
 
   const emailNorm = String(email).trim().toLowerCase();
   const sets = ['name = ?', 'email = ?', 'role = ?'];
@@ -2105,6 +2823,18 @@ app.put('/api/users/:id', authRequired, staffExceptChecker, ownerOnly, async (re
 
   try {
     await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
+
+    await logActivity({
+      req,
+      action: 'UPDATE_USER',
+      entityType: 'users',
+      entityId: req.params.id,
+      reference: emailNorm,
+      description: `Mengubah data user "${name.trim()}" (Role: ${r})`,
+      beforeData: { name: oldUser.name, email: oldUser.email, role: oldUser.role },
+      afterData: { name: name.trim(), email: emailNorm, role: r },
+    });
+
     res.json({ ok: true });
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY')
@@ -2126,6 +2856,18 @@ app.post('/api/users', authRequired, staffExceptChecker, ownerOnly, async (req, 
       'INSERT INTO users (name, email, password_hash, role) VALUES (?,?,?,?)',
       [name.trim(), String(email).trim().toLowerCase(), hash, r]
     );
+
+    await logActivity({
+      req,
+      action: 'CREATE_USER',
+      entityType: 'users',
+      entityId: ins.insertId,
+      reference: String(email).trim().toLowerCase(),
+      description: `Menambahkan user baru "${name.trim()}" (${r})`,
+      beforeData: null,
+      afterData: { id: ins.insertId, name: name.trim(), email: String(email).trim().toLowerCase(), role: r },
+    });
+
     res.status(201).json({ id: ins.insertId });
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY')
@@ -2137,7 +2879,28 @@ app.post('/api/users', authRequired, staffExceptChecker, ownerOnly, async (req, 
 app.delete('/api/users/:id', authRequired, staffExceptChecker, ownerOnly, async (req, res) => {
   if (String(req.params.id) === String(req.user.id))
     return res.status(400).json({ message: 'Tidak bisa hapus diri sendiri' });
+
+  const [existing] = await pool.query(
+    'SELECT id, name, email, role FROM users WHERE id = ? LIMIT 1',
+    [req.params.id]
+  );
+  const oldUser = existing[0];
+
   await pool.query('DELETE FROM users WHERE id = ?', [req.params.id]);
+
+  if (oldUser) {
+    await logActivity({
+      req,
+      action: 'DELETE_USER',
+      entityType: 'users',
+      entityId: req.params.id,
+      reference: oldUser.email,
+      description: `Menghapus user "${oldUser.name}" (${oldUser.email})`,
+      beforeData: oldUser,
+      afterData: null,
+    });
+  }
+
   res.json({ ok: true });
 });
 
@@ -2208,6 +2971,24 @@ app.post('/api/expenses', authRequired, staffExceptChecker, ownerOrAdmin, async 
         req.user.id
       ]
     );
+
+    await logActivity({
+      req,
+      action: 'CREATE_EXPENSE',
+      entityType: 'expenses',
+      entityId: r.insertId,
+      reference: `Rp ${Number(amount).toLocaleString('id-ID')}`,
+      description: `Menambah pengeluaran [${category}]: Rp ${Number(amount).toLocaleString('id-ID')}`,
+      beforeData: null,
+      afterData: {
+        category,
+        amount: Number(amount) || 0,
+        expense_date,
+        store_id: store_id ? Number(store_id) : null,
+        notes: notes || null,
+      },
+    });
+
     res.status(201).json({ id: r.insertId });
   } catch (e) {
     console.error(e);
@@ -2221,6 +3002,10 @@ app.put('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, asy
     if (!category || !amount || !expense_date) {
       return res.status(400).json({ message: 'Kategori, jumlah, dan tanggal wajib diisi' });
     }
+
+    const [existing] = await pool.query('SELECT * FROM expenses WHERE id = ? LIMIT 1', [req.params.id]);
+    const oldExpense = existing[0];
+
     await pool.query(
       `UPDATE expenses 
        SET category = ?, amount = ?, expense_date = ?, store_id = ?, notes = ? 
@@ -2234,6 +3019,24 @@ app.put('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, asy
         req.params.id
       ]
     );
+
+    await logActivity({
+      req,
+      action: 'UPDATE_EXPENSE',
+      entityType: 'expenses',
+      entityId: req.params.id,
+      reference: `ID #${req.params.id}`,
+      description: `Mengubah pengeluaran [${category}] menjadi Rp ${Number(amount).toLocaleString('id-ID')}`,
+      beforeData: oldExpense,
+      afterData: {
+        category,
+        amount: Number(amount) || 0,
+        expense_date,
+        store_id: store_id ? Number(store_id) : null,
+        notes: notes || null,
+      },
+    });
+
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -2243,7 +3046,24 @@ app.put('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, asy
 
 app.delete('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
   try {
+    const [existing] = await pool.query('SELECT * FROM expenses WHERE id = ? LIMIT 1', [req.params.id]);
+    const oldExpense = existing[0];
+
     await pool.query('DELETE FROM expenses WHERE id = ?', [req.params.id]);
+
+    if (oldExpense) {
+      await logActivity({
+        req,
+        action: 'DELETE_EXPENSE',
+        entityType: 'expenses',
+        entityId: req.params.id,
+        reference: `Rp ${Number(oldExpense.amount).toLocaleString('id-ID')}`,
+        description: `Menghapus pengeluaran [${oldExpense.category}] sebesar Rp ${Number(oldExpense.amount).toLocaleString('id-ID')}`,
+        beforeData: oldExpense,
+        afterData: null,
+      });
+    }
+
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -2317,6 +3137,24 @@ app.post('/api/incomes', authRequired, staffExceptChecker, ownerOrAdmin, async (
         req.user.id
       ]
     );
+
+    await logActivity({
+      req,
+      action: 'CREATE_INCOME',
+      entityType: 'incomes',
+      entityId: r.insertId,
+      reference: `Rp ${Number(amount).toLocaleString('id-ID')}`,
+      description: `Menambah pemasukan [${category}]: Rp ${Number(amount).toLocaleString('id-ID')}`,
+      beforeData: null,
+      afterData: {
+        category,
+        source: source || null,
+        amount: Number(amount) || 0,
+        income_date,
+        notes: notes || null,
+      },
+    });
+
     res.status(201).json({ id: r.insertId });
   } catch (e) {
     console.error(e);
@@ -2330,6 +3168,10 @@ app.put('/api/incomes/:id', authRequired, staffExceptChecker, ownerOrAdmin, asyn
     if (!category || !amount || !income_date) {
       return res.status(400).json({ message: 'Kategori, jumlah, dan tanggal wajib diisi' });
     }
+
+    const [existing] = await pool.query('SELECT * FROM incomes WHERE id = ? LIMIT 1', [req.params.id]);
+    const oldIncome = existing[0];
+
     await pool.query(
       `UPDATE incomes 
        SET category = ?, source = ?, amount = ?, income_date = ?, notes = ? 
@@ -2343,6 +3185,24 @@ app.put('/api/incomes/:id', authRequired, staffExceptChecker, ownerOrAdmin, asyn
         req.params.id
       ]
     );
+
+    await logActivity({
+      req,
+      action: 'UPDATE_INCOME',
+      entityType: 'incomes',
+      entityId: req.params.id,
+      reference: `ID #${req.params.id}`,
+      description: `Mengubah pemasukan [${category}] menjadi Rp ${Number(amount).toLocaleString('id-ID')}`,
+      beforeData: oldIncome,
+      afterData: {
+        category,
+        source: source || null,
+        amount: Number(amount) || 0,
+        income_date,
+        notes: notes || null,
+      },
+    });
+
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -2352,7 +3212,24 @@ app.put('/api/incomes/:id', authRequired, staffExceptChecker, ownerOrAdmin, asyn
 
 app.delete('/api/incomes/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
   try {
+    const [existing] = await pool.query('SELECT * FROM incomes WHERE id = ? LIMIT 1', [req.params.id]);
+    const oldIncome = existing[0];
+
     await pool.query('DELETE FROM incomes WHERE id = ?', [req.params.id]);
+
+    if (oldIncome) {
+      await logActivity({
+        req,
+        action: 'DELETE_INCOME',
+        entityType: 'incomes',
+        entityId: req.params.id,
+        reference: `Rp ${Number(oldIncome.amount).toLocaleString('id-ID')}`,
+        description: `Menghapus pemasukan [${oldIncome.category}] sebesar Rp ${Number(oldIncome.amount).toLocaleString('id-ID')}`,
+        beforeData: oldIncome,
+        afterData: null,
+      });
+    }
+
     res.json({ ok: true });
   } catch (e) {
     console.error(e);

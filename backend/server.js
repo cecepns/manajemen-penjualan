@@ -1979,11 +1979,17 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
         beforeData: null,
         afterData: {
           order_no: order_no.trim(),
-          resi,
+          order_date: orderDateKeyDb(order_date),
           status: stat,
-          order_date,
-          total_items: items.length,
+          resi,
+          items: items.map((it) => ({
+            product_name: it.product_name?.trim() || '',
+            variasi: it.variasi?.trim() || null,
+            qty: Number(it.qty) || 1,
+            selling_price: Number(it.selling_price) || 0,
+          })),
           nominal_cair: gnom,
+          notes: body.notes?.trim() || null,
         },
       });
 
@@ -2078,11 +2084,15 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
       beforeData: null,
       afterData: {
         order_no: order_no.trim(),
+        order_date: orderDateKeyDb(order_date),
         product_name: product_name.trim(),
+        variasi: body.variasi?.trim() || null,
         qty,
         selling_price: Number(body.selling_price) || 0,
         status: stat,
         nominal_cair,
+        resi: body.resi?.trim() || null,
+        notes: body.notes?.trim() || null,
       },
     });
 
@@ -2255,21 +2265,63 @@ app.put('/api/orders/group', authRequired, staffExceptChecker, async (req, res) 
 
     await conn.commit();
 
+    const oldOrderDate = orderDateKeyDb(sorted[0]?.order_date);
+    const newOrderDate = orderDateKeyDb(order_date);
     const oldStat = sorted[0]?.status;
-    const oldNominal = sorted.find((r) => r.nominal_cair != null)?.nominal_cair;
-    let actionType = 'UPDATE_ORDER';
-    let desc = `Mengubah data pesanan (${order_no.trim()})`;
-
-    if (oldStat !== stat) {
-      desc = `Mengubah status pesanan (${order_no.trim()}) dari "${oldStat}" menjadi "${stat}"`;
-    }
+    const oldResi = sorted[0]?.resi || null;
+    const oldNotes = sorted[0]?.notes || null;
+    const oldNominalRaw = sorted.find((r) => r.nominal_cair != null)?.nominal_cair;
+    const oldNominal = oldNominalRaw != null ? Number(oldNominalRaw) : null;
     const gnomVal =
       body.nominal_cair === '' || body.nominal_cair == null || body.nominal_cair === undefined
         ? null
         : Number(body.nominal_cair);
-    if (oldNominal !== gnomVal && gnomVal !== null) {
+
+    const oldItems = sorted.map((r) => ({
+      product_name: r.product_name,
+      variasi: r.variasi || null,
+      qty: Number(r.qty) || 1,
+      selling_price: Number(r.selling_price) || 0,
+    }));
+    const newItems = items.map((it) => ({
+      product_name: it.product_name.trim(),
+      variasi: it.variasi?.trim() || null,
+      qty: Number(it.qty) || 1,
+      selling_price: Number(it.selling_price) || 0,
+    }));
+
+    const changes = [];
+    if (oldOrderDate !== newOrderDate) {
+      changes.push(`Tanggal (${oldOrderDate || '-'} → ${newOrderDate})`);
+    }
+    if (oldStat !== stat) {
+      changes.push(`Status ("${oldStat}" → "${stat}")`);
+    }
+    if (oldNominal !== gnomVal) {
+      changes.push(
+        `Nominal WD (${oldNominal != null ? 'Rp ' + oldNominal.toLocaleString('id-ID') : '-'} → ${gnomVal != null ? 'Rp ' + gnomVal.toLocaleString('id-ID') : '-'})`
+      );
+    }
+    if ((oldResi || '') !== (resi || '')) {
+      changes.push(`Resi ("${oldResi || '-'}" → "${resi || '-'}")`);
+    }
+    if ((oldNotes || '') !== (notes || '')) {
+      changes.push(`Catatan ("${oldNotes || '-'}" → "${notes || '-'}")`);
+    }
+    if (JSON.stringify(oldItems) !== JSON.stringify(newItems)) {
+      changes.push('Daftar Produk/Item');
+    }
+
+    let actionType = 'UPDATE_ORDER';
+    if (oldNominal !== gnomVal && gnomVal !== null && changes.length === 1) {
       actionType = 'UPDATE_STATUS_WD';
-      desc = `Mengubah status pencairan/WD pesanan (${order_no.trim()}) menjadi Rp ${gnomVal.toLocaleString('id-ID')}`;
+    }
+
+    let desc = `Mengubah data pesanan (${order_no.trim()})`;
+    if (changes.length === 1 && oldOrderDate !== newOrderDate) {
+      desc = `Mengubah/Memundurkan tanggal pesanan (${order_no.trim()}) dari ${oldOrderDate || '-'} menjadi ${newOrderDate}`;
+    } else if (changes.length > 0) {
+      desc = `Mengubah pesanan (${order_no.trim()}): ${changes.join(', ')}`;
     }
 
     await logActivity({
@@ -2280,14 +2332,22 @@ app.put('/api/orders/group', authRequired, staffExceptChecker, async (req, res) 
       reference: order_no.trim(),
       description: desc,
       beforeData: {
+        order_no: sorted[0]?.order_no || order_no.trim(),
+        order_date: oldOrderDate,
         status: oldStat,
-        nominal_cair: oldNominal != null ? Number(oldNominal) : null,
-        resi: sorted[0]?.resi,
+        nominal_cair: oldNominal,
+        resi: oldResi,
+        notes: oldNotes,
+        items: oldItems,
       },
       afterData: {
+        order_no: order_no.trim(),
+        order_date: newOrderDate,
         status: stat,
         nominal_cair: gnomVal,
         resi,
+        notes,
+        items: newItems,
       },
     });
 
@@ -2431,17 +2491,65 @@ app.put('/api/orders/:id', authRequired, staffExceptChecker, async (req, res) =>
 
     await conn.commit();
 
+    const oldOrderDate = orderDateKeyDb(prev.order_date);
+    const newOrderDate = orderDateKeyDb(body.order_date ?? prev.order_date);
     const oldStat = prev.status;
-    const oldNominal = prev.nominal_cair;
-    let actionType = 'UPDATE_ORDER';
-    let desc = `Mengubah data pesanan (${order_no_m})`;
+    const oldNominal = prev.nominal_cair != null ? Number(prev.nominal_cair) : null;
+    const oldResi = prev.resi || null;
+    const newResi = body.resi !== undefined ? body.resi?.trim() || null : prev.resi;
+    const oldNotes = prev.notes || null;
+    const newNotes = body.notes !== undefined ? body.notes?.trim() || null : prev.notes;
+    const oldProd = prev.product_name;
+    const newProd = product_name_m;
+    const oldVar = prev.variasi || null;
+    const newVar = variasi_m || null;
+    const oldQty = Number(prev.qty) || 1;
+    const newQty = qty;
+    const oldPrice = Number(prev.selling_price) || 0;
+    const newPrice = selling_m;
 
-    if (oldStat !== stat) {
-      desc = `Mengubah status pesanan (${order_no_m}) dari "${oldStat}" menjadi "${stat}"`;
+    const changes = [];
+    if (oldOrderDate !== newOrderDate) {
+      changes.push(`Tanggal (${oldOrderDate || '-'} → ${newOrderDate})`);
     }
-    if (oldNominal !== nominal_cair && nominal_cair !== null) {
+    if (oldStat !== stat) {
+      changes.push(`Status ("${oldStat}" → "${stat}")`);
+    }
+    if (oldProd !== newProd || oldVar !== newVar) {
+      changes.push(
+        `Produk ("${oldProd}${oldVar ? ' - ' + oldVar : ''}" → "${newProd}${newVar ? ' - ' + newVar : ''}")`
+      );
+    }
+    if (oldQty !== newQty) {
+      changes.push(`Qty (${oldQty} → ${newQty})`);
+    }
+    if (oldPrice !== newPrice) {
+      changes.push(
+        `Harga (Rp ${oldPrice.toLocaleString('id-ID')} → Rp ${newPrice.toLocaleString('id-ID')})`
+      );
+    }
+    if (oldNominal !== nominal_cair) {
+      changes.push(
+        `Nominal WD (${oldNominal != null ? 'Rp ' + oldNominal.toLocaleString('id-ID') : '-'} → ${nominal_cair != null ? 'Rp ' + Number(nominal_cair).toLocaleString('id-ID') : '-'})`
+      );
+    }
+    if ((oldResi || '') !== (newResi || '')) {
+      changes.push(`Resi ("${oldResi || '-'}" → "${newResi || '-'}")`);
+    }
+    if ((oldNotes || '') !== (newNotes || '')) {
+      changes.push(`Catatan ("${oldNotes || '-'}" → "${newNotes || '-'}")`);
+    }
+
+    let actionType = 'UPDATE_ORDER';
+    if (oldNominal !== nominal_cair && nominal_cair !== null && changes.length === 1) {
       actionType = 'UPDATE_STATUS_WD';
-      desc = `Mengubah nominal pencairan/WD pesanan (${order_no_m}) menjadi Rp ${Number(nominal_cair).toLocaleString('id-ID')}`;
+    }
+
+    let desc = `Mengubah data pesanan (${order_no_m})`;
+    if (changes.length === 1 && oldOrderDate !== newOrderDate) {
+      desc = `Mengubah/Memundurkan tanggal pesanan (${order_no_m}) dari ${oldOrderDate || '-'} menjadi ${newOrderDate}`;
+    } else if (changes.length > 0) {
+      desc = `Mengubah pesanan (${order_no_m}): ${changes.join(', ')}`;
     }
 
     await logActivity({
@@ -2452,16 +2560,28 @@ app.put('/api/orders/:id', authRequired, staffExceptChecker, async (req, res) =>
       reference: order_no_m,
       description: desc,
       beforeData: {
+        order_no: prev.order_no,
+        order_date: oldOrderDate,
         product_name: prev.product_name,
+        variasi: prev.variasi,
+        qty: oldQty,
+        selling_price: oldPrice,
         status: oldStat,
-        nominal_cair: oldNominal != null ? Number(oldNominal) : null,
-        resi: prev.resi,
+        nominal_cair: oldNominal,
+        resi: oldResi,
+        notes: oldNotes,
       },
       afterData: {
+        order_no: order_no_m,
+        order_date: newOrderDate,
         product_name: product_name_m,
+        variasi: variasi_m,
+        qty: newQty,
+        selling_price: newPrice,
         status: stat,
         nominal_cair,
-        resi: body.resi !== undefined ? body.resi : prev.resi,
+        resi: newResi,
+        notes: newNotes,
       },
     });
 
@@ -2501,18 +2621,32 @@ app.delete('/api/orders/:id', authRequired, staffExceptChecker, ownerOnly, async
     );
     await conn.commit();
 
+    const siblingItems = siblings.map((r) => ({
+      product_name: r.product_name,
+      variasi: r.variasi || null,
+      qty: Number(r.qty) || 1,
+      selling_price: Number(r.selling_price) || 0,
+    }));
+
     await logActivity({
       req,
       action: 'DELETE_ORDER',
       entityType: 'orders',
       entityId: req.params.id,
       reference: prev.order_no,
-      description: `Menghapus pesanan (${prev.order_no}) - ${prev.product_name}`,
+      description: `Menghapus pesanan (${prev.order_no}) - ${siblings.length > 1 ? `${siblings.length} produk` : prev.product_name}`,
       beforeData: {
         order_no: prev.order_no,
-        product_name: prev.product_name,
+        order_date: orderDateKeyDb(prev.order_date),
         status: prev.status,
-        qty: prev.qty,
+        resi: prev.resi,
+        nominal_cair: prev.nominal_cair != null ? Number(prev.nominal_cair) : null,
+        notes: prev.notes || null,
+        items: siblingItems.length > 1 ? siblingItems : undefined,
+        product_name: siblingItems.length === 1 ? prev.product_name : undefined,
+        variasi: siblingItems.length === 1 ? prev.variasi : undefined,
+        qty: siblingItems.length === 1 ? prev.qty : undefined,
+        selling_price: siblingItems.length === 1 ? Number(prev.selling_price) || 0 : undefined,
       },
       afterData: null,
     });
@@ -2824,13 +2958,34 @@ app.put('/api/users/:id', authRequired, staffExceptChecker, ownerOnly, async (re
   try {
     await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
 
+    const userChanges = [];
+    if (oldUser.role !== r) {
+      userChanges.push(`Role (${oldUser.role} → ${r})`);
+    }
+    if (oldUser.name !== name.trim()) {
+      userChanges.push(`Nama ("${oldUser.name}" → "${name.trim()}")`);
+    }
+    if (oldUser.email !== emailNorm) {
+      userChanges.push(`Email ("${oldUser.email}" → "${emailNorm}")`);
+    }
+    if (password != null && String(password).trim() !== '') {
+      userChanges.push('Password diubah');
+    }
+
+    let userDesc = `Mengubah data user "${name.trim()}" (Role: ${r})`;
+    if (oldUser.role !== r && userChanges.length === 1) {
+      userDesc = `Mengubah role user "${name.trim()}" dari "${oldUser.role}" menjadi "${r}"`;
+    } else if (userChanges.length > 0) {
+      userDesc = `Mengubah user "${name.trim()}": ${userChanges.join(', ')}`;
+    }
+
     await logActivity({
       req,
       action: 'UPDATE_USER',
       entityType: 'users',
       entityId: req.params.id,
       reference: emailNorm,
-      description: `Mengubah data user "${name.trim()}" (Role: ${r})`,
+      description: userDesc,
       beforeData: { name: oldUser.name, email: oldUser.email, role: oldUser.role },
       afterData: { name: name.trim(), email: emailNorm, role: r },
     });

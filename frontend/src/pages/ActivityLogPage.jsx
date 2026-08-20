@@ -2,16 +2,20 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowRight,
   Calendar,
+  CheckCircle2,
   Clock,
+  Code2,
   Download,
   Eye,
   Filter,
   History,
   Layers,
+  ListTree,
   Loader2,
   RefreshCw,
   Search,
   Shield,
+  Tag,
   User,
   X,
 } from 'lucide-react';
@@ -83,26 +87,135 @@ const entityLabels = {
   auth: 'Autentikasi',
 };
 
-function renderDataValue(val) {
-  if (val == null) return <span className="text-slate-400 italic">-</span>;
-  if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
-    return <span className="font-medium text-slate-800 break-words">{String(val)}</span>;
+const FIELD_LABELS = {
+  order_date: 'Tgl Pesanan',
+  order_no: 'No Pesanan',
+  status: 'Status',
+  nominal_cair: 'Nominal WD',
+  product_name: 'Produk',
+  variasi: 'Variasi',
+  qty: 'Qty',
+  selling_price: 'Harga Jual',
+  resi: 'No Resi',
+  notes: 'Catatan',
+  items: 'Daftar Item',
+  total_items: 'Total Item',
+  name: 'Nama User',
+  email: 'Email',
+  role: 'Role',
+  stock: 'Stok',
+  hpp: 'HPP',
+  amount: 'Nominal',
+  category: 'Kategori',
+  happened_at: 'Tanggal',
+  description: 'Keterangan',
+};
+
+function formatFieldValue(key, val) {
+  if (val == null || val === '') return '-';
+  if (
+    key === 'nominal_cair' ||
+    key === 'selling_price' ||
+    key === 'amount' ||
+    key === 'hpp'
+  ) {
+    const n = Number(val);
+    if (!isNaN(n)) return `Rp ${n.toLocaleString('id-ID')}`;
+  }
+  if (key === 'items' && Array.isArray(val)) {
+    if (!val.length) return '-';
+    return val
+      .map(
+        (it) =>
+          `${it.product_name || 'Item'}${it.variasi ? ` (${it.variasi})` : ''} x${it.qty || 1}${
+            it.selling_price
+              ? ` @Rp ${Number(it.selling_price).toLocaleString('id-ID')}`
+              : ''
+          }`
+      )
+      .join('; ');
   }
   if (typeof val === 'object') {
-    return (
-      <div className="space-y-0.5 text-xs">
-        {Object.entries(val).map(([k, v]) => (
-          <div key={k} className="flex items-baseline gap-1">
-            <span className="text-slate-400 font-mono text-[11px]">{k}:</span>
-            <span className="font-semibold text-slate-700">
-              {v != null ? String(v) : '-'}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
+    return JSON.stringify(val);
   }
   return String(val);
+}
+
+function RenderDiffValue({ val, isChanged, isAfter, isDate }) {
+  if (val == null || val === '') {
+    return <span className="text-slate-400 italic text-[11px]">-</span>;
+  }
+
+  let text = String(val);
+  if (typeof val === 'object') {
+    text = JSON.stringify(val);
+  }
+
+  return (
+    <span
+      className={`font-semibold text-xs break-words inline-block ${
+        isChanged
+          ? isAfter
+            ? 'text-emerald-800 bg-emerald-100/90 px-1.5 py-0.5 rounded font-bold'
+            : 'text-rose-800 bg-rose-100/90 px-1.5 py-0.5 rounded line-through decoration-rose-500'
+          : 'text-slate-700'
+      }`}
+    >
+      {isDate && <Calendar size={11} className="inline mr-1 -mt-0.5" />}
+      {text}
+    </span>
+  );
+}
+
+function RenderDataCard({ data, compareData, isAfter }) {
+  if (data == null) {
+    return <span className="text-slate-400 italic text-xs">Tidak ada data</span>;
+  }
+  if (typeof data !== 'object') {
+    return <span className="font-medium text-slate-800 break-words text-xs">{String(data)}</span>;
+  }
+
+  const entries = Object.entries(data);
+  if (!entries.length) {
+    return <span className="text-slate-400 italic text-xs">-</span>;
+  }
+
+  return (
+    <div className="space-y-1 text-xs">
+      {entries.map(([k, v]) => {
+        const compareVal = compareData ? compareData[k] : undefined;
+        const isChanged =
+          compareData !== null &&
+          compareData !== undefined &&
+          JSON.stringify(v) !== JSON.stringify(compareVal);
+        const label = FIELD_LABELS[k] || k;
+        const formatted = formatFieldValue(k, v);
+        const isDateKey = k === 'order_date' || k === 'happened_at';
+
+        return (
+          <div key={k} className="flex items-start gap-1.5 py-0.5 border-b border-slate-100/60 last:border-0">
+            <span
+              className={`text-[11px] shrink-0 ${
+                isChanged
+                  ? isAfter
+                    ? 'text-emerald-700 font-bold'
+                    : 'text-rose-700 font-bold'
+                  : 'text-slate-500'
+              }`}
+            >
+              {label}:
+            </span>
+            <RenderDiffValue
+              val={formatted}
+              isChanged={isChanged}
+              isAfter={isAfter}
+              isDate={isDateKey}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function ActivityLogPage() {
@@ -120,6 +233,7 @@ export default function ActivityLogPage() {
   const [total, setTotal] = useState(0);
   const [usersList, setUsersList] = useState([]);
   const [selectedDetail, setSelectedDetail] = useState(null);
+  const [modalTab, setModalTab] = useState('diff'); // 'diff' | 'json'
 
   // Load list user untuk opsi filter
   useEffect(() => {
@@ -210,6 +324,41 @@ export default function ActivityLogPage() {
   const totalPages = Math.ceil(total / limit) || 1;
   const startIdx = total === 0 ? 0 : (page - 1) * limit + 1;
   const endIdx = Math.min(page * limit, total);
+
+  // Helper untuk modal detail perbandingan
+  function getComparisonRows(log) {
+    if (!log) return [];
+    const beforeObj = log.before_parsed || (typeof log.before_data === 'object' ? log.before_data : null);
+    const afterObj = log.after_parsed || (typeof log.after_data === 'object' ? log.after_data : null);
+
+    if (!beforeObj && !afterObj) return [];
+
+    const keys = new Set([
+      ...Object.keys(beforeObj || {}),
+      ...Object.keys(afterObj || {}),
+    ]);
+
+    return Array.from(keys).map((k) => {
+      const bVal = beforeObj ? beforeObj[k] : undefined;
+      const aVal = afterObj ? afterObj[k] : undefined;
+      const bStr = formatFieldValue(k, bVal);
+      const aStr = formatFieldValue(k, aVal);
+      const isChanged = JSON.stringify(bVal) !== JSON.stringify(aVal);
+      let status = 'Tetap';
+      if (bVal === undefined && aVal !== undefined) status = 'Ditambahkan';
+      else if (bVal !== undefined && aVal === undefined) status = 'Dihapus';
+      else if (isChanged) status = 'Diubah';
+
+      return {
+        key: k,
+        label: FIELD_LABELS[k] || k,
+        beforeVal: bStr,
+        afterVal: aStr,
+        isChanged,
+        status,
+      };
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -357,6 +506,7 @@ export default function ActivityLogPage() {
               <option value="DELETE_EXPENSE">DELETE EXPENSE</option>
               <option value="CREATE_INCOME">CREATE INCOME</option>
               <option value="UPDATE_INCOME">UPDATE INCOME</option>
+              <option value="UPDATE_USER">UPDATE USER</option>
             </select>
           </div>
 
@@ -417,7 +567,7 @@ export default function ActivityLogPage() {
                 <th className="px-4 py-3.5">WHO</th>
                 <th className="px-4 py-3.5">WHAT (Aktivitas)</th>
                 <th className="px-4 py-3.5">WHEN</th>
-                <th className="px-4 py-3.5 min-w-[240px]">BEFORE → AFTER</th>
+                <th className="px-4 py-3.5 min-w-[280px]">BEFORE → AFTER</th>
                 <th className="px-4 py-3.5">REFERENCE</th>
                 <th className="px-4 py-3.5 text-center">Detail</th>
               </tr>
@@ -443,6 +593,9 @@ export default function ActivityLogPage() {
                     actionBadges[l.action] ||
                     'bg-slate-100 text-slate-700 border-slate-200';
 
+                  const beforeData = l.before_parsed || l.before_data;
+                  const afterData = l.after_parsed || l.after_data;
+
                   return (
                     <tr key={l.id} className="hover:bg-slate-50/70 transition-colors">
                       {/* WHO */}
@@ -464,7 +617,7 @@ export default function ActivityLogPage() {
 
                       {/* WHAT */}
                       <td className="px-4 py-3.5 align-top">
-                        <div className="space-y-1">
+                        <div className="space-y-1 max-w-xs sm:max-w-md">
                           <span
                             className={`inline-block rounded px-2 py-0.5 text-[11px] font-semibold border ${badgeClass}`}
                           >
@@ -488,13 +641,17 @@ export default function ActivityLogPage() {
 
                       {/* BEFORE -> AFTER */}
                       <td className="px-4 py-3.5 align-top text-xs">
-                        <div className="flex items-start gap-2 max-w-sm">
+                        <div className="flex items-start gap-2 max-w-md">
                           {/* BEFORE */}
                           <div className="flex-1 rounded-lg border border-rose-100 bg-rose-50/60 p-2 text-xs">
-                            <span className="block text-[10px] font-bold uppercase tracking-wider text-rose-600 mb-0.5">
+                            <span className="block text-[10px] font-bold uppercase tracking-wider text-rose-600 mb-1">
                               BEFORE
                             </span>
-                            {renderDataValue(l.before_parsed || l.before_data)}
+                            <RenderDataCard
+                              data={beforeData}
+                              compareData={afterData}
+                              isAfter={false}
+                            />
                           </div>
 
                           <ArrowRight
@@ -504,10 +661,14 @@ export default function ActivityLogPage() {
 
                           {/* AFTER */}
                           <div className="flex-1 rounded-lg border border-emerald-100 bg-emerald-50/60 p-2 text-xs">
-                            <span className="block text-[10px] font-bold uppercase tracking-wider text-emerald-600 mb-0.5">
+                            <span className="block text-[10px] font-bold uppercase tracking-wider text-emerald-600 mb-1">
                               AFTER
                             </span>
-                            {renderDataValue(l.after_parsed || l.after_data)}
+                            <RenderDataCard
+                              data={afterData}
+                              compareData={beforeData}
+                              isAfter={true}
+                            />
                           </div>
                         </div>
                       </td>
@@ -529,7 +690,10 @@ export default function ActivityLogPage() {
                           type="button"
                           className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600 transition"
                           title="Inspeksi Detail Data"
-                          onClick={() => setSelectedDetail(l)}
+                          onClick={() => {
+                            setSelectedDetail(l);
+                            setModalTab('diff');
+                          }}
                         >
                           <Eye size={15} />
                         </button>
@@ -608,7 +772,7 @@ export default function ActivityLogPage() {
       {/* Detail Modal Inspector */}
       {selectedDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
+          <div className="relative w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-6 py-4">
               <div>
@@ -629,7 +793,7 @@ export default function ActivityLogPage() {
             </div>
 
             {/* Content */}
-            <div className="p-6 space-y-4 text-sm text-slate-700 max-h-[70vh] overflow-y-auto">
+            <div className="p-6 space-y-4 text-sm text-slate-700 overflow-y-auto flex-1">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <div className="rounded-lg bg-slate-50 p-2.5 border border-slate-100">
                   <span className="text-slate-400 block">Pelaku (WHO)</span>
@@ -663,32 +827,131 @@ export default function ActivityLogPage() {
                 </div>
               </div>
 
-              {/* Before & After JSON / Text Inspector */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-rose-600 mb-1.5 flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full bg-rose-500" />
-                    Data Sebelum (BEFORE)
-                  </h4>
-                  <pre className="rounded-lg bg-slate-900 p-3.5 text-xs text-rose-300 font-mono overflow-x-auto max-h-56 leading-relaxed">
-                    {selectedDetail.before_parsed
-                      ? JSON.stringify(selectedDetail.before_parsed, null, 2)
-                      : selectedDetail.before_data || 'null'}
-                  </pre>
-                </div>
-
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-600 mb-1.5 flex items-center gap-1">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                    Data Sesudah (AFTER)
-                  </h4>
-                  <pre className="rounded-lg bg-slate-900 p-3.5 text-xs text-emerald-300 font-mono overflow-x-auto max-h-56 leading-relaxed">
-                    {selectedDetail.after_parsed
-                      ? JSON.stringify(selectedDetail.after_parsed, null, 2)
-                      : selectedDetail.after_data || 'null'}
-                  </pre>
-                </div>
+              {/* Inspector View Tab Switcher */}
+              <div className="flex items-center gap-2 border-b border-slate-200 pb-2 pt-1">
+                <button
+                  type="button"
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    modalTab === 'diff'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                  onClick={() => setModalTab('diff')}
+                >
+                  <ListTree size={14} />
+                  <span>Tabel Perbandingan (Diff)</span>
+                </button>
+                <button
+                  type="button"
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    modalTab === 'json'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                  onClick={() => setModalTab('json')}
+                >
+                  <Code2 size={14} />
+                  <span>Data Mentah (JSON)</span>
+                </button>
               </div>
+
+              {modalTab === 'diff' ? (
+                <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                  {getComparisonRows(selectedDetail).length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-400">
+                      Tidak ada detail perubahan data spesifik.
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[10px]">
+                        <tr>
+                          <th className="px-3.5 py-2.5 w-1/4">Field / Parameter</th>
+                          <th className="px-3.5 py-2.5 w-1/3 text-rose-700 bg-rose-50/50">Sebelum (BEFORE)</th>
+                          <th className="px-3.5 py-2.5 w-1/3 text-emerald-700 bg-emerald-50/50">Sesudah (AFTER)</th>
+                          <th className="px-3.5 py-2.5 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {getComparisonRows(selectedDetail).map((row) => (
+                          <tr
+                            key={row.key}
+                            className={row.isChanged ? 'bg-amber-50/30' : 'hover:bg-slate-50'}
+                          >
+                            <td className="px-3.5 py-2.5 font-medium text-slate-800 align-top">
+                              <span className="block font-semibold">{row.label}</span>
+                              <span className="text-[10px] text-slate-400 font-mono">{row.key}</span>
+                            </td>
+                            <td className="px-3.5 py-2.5 align-top text-slate-700">
+                              <span
+                                className={
+                                  row.isChanged && row.beforeVal !== '-'
+                                    ? 'text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded font-medium'
+                                    : ''
+                                }
+                              >
+                                {row.beforeVal}
+                              </span>
+                            </td>
+                            <td className="px-3.5 py-2.5 align-top text-slate-700">
+                              <span
+                                className={
+                                  row.isChanged && row.afterVal !== '-'
+                                    ? 'text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded font-bold'
+                                    : ''
+                                }
+                              >
+                                {row.afterVal}
+                              </span>
+                            </td>
+                            <td className="px-3.5 py-2.5 text-center align-top">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  row.status === 'Diubah'
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    : row.status === 'Ditambahkan'
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                    : row.status === 'Dihapus'
+                                    ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                    : 'bg-slate-100 text-slate-600'
+                                }`}
+                              >
+                                {row.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              ) : (
+                /* Before & After JSON / Text Inspector */
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-rose-600 mb-1.5 flex items-center gap-1">
+                      <span className="h-2 w-2 rounded-full bg-rose-500" />
+                      Data Sebelum (BEFORE)
+                    </h4>
+                    <pre className="rounded-lg bg-slate-900 p-3.5 text-xs text-rose-300 font-mono overflow-x-auto max-h-56 leading-relaxed">
+                      {selectedDetail.before_parsed
+                        ? JSON.stringify(selectedDetail.before_parsed, null, 2)
+                        : selectedDetail.before_data || 'null'}
+                    </pre>
+                  </div>
+
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-600 mb-1.5 flex items-center gap-1">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                      Data Sesudah (AFTER)
+                    </h4>
+                    <pre className="rounded-lg bg-slate-900 p-3.5 text-xs text-emerald-300 font-mono overflow-x-auto max-h-56 leading-relaxed">
+                      {selectedDetail.after_parsed
+                        ? JSON.stringify(selectedDetail.after_parsed, null, 2)
+                        : selectedDetail.after_data || 'null'}
+                    </pre>
+                  </div>
+                </div>
+              )}
 
               {/* Technical Meta */}
               <div className="rounded-lg bg-slate-50 p-3 border border-slate-100 text-xs space-y-1 text-slate-600">

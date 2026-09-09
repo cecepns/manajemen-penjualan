@@ -53,20 +53,24 @@ const emptyLine = () => ({
 
 function productToOption(p) {
   const bc = p.barcode?.trim();
+  const isLocked = !!p.is_locked_audit;
   const bits = [p.name];
   if (bc) bits.push(bc);
   bits.push(`stok ${p.stock}`);
+  if (isLocked) bits.push('(SEDANG DIAUDIT)');
   return {
     value: p.id,
     label: bits.join(' · '),
+    isDisabled: isLocked,
     raw: p,
   };
 }
 
 function renderProductOptionLabel(option) {
   const photoUrl = option?.raw?.photo_url ? toBackendUrl(option.raw.photo_url) : '';
+  const isLocked = option?.isDisabled || option?.raw?.is_locked_audit;
   return (
-    <div className="flex items-center gap-2">
+    <div className={`flex items-center gap-2 ${isLocked ? 'opacity-50' : ''}`}>
       {photoUrl ? (
         <img
           src={photoUrl}
@@ -75,6 +79,11 @@ function renderProductOptionLabel(option) {
         />
       ) : null}
       <span className="truncate">{option.label}</span>
+      {isLocked && (
+        <span className="ml-auto shrink-0 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
+          TERKUNCI AUDIT
+        </span>
+      )}
     </div>
   );
 }

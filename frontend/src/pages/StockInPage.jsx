@@ -14,11 +14,17 @@ async function loadProductOptions(inputValue) {
       params: { page: 1, limit: SEARCH_LIMIT, search: inputValue || '' },
     });
     const list = Array.isArray(data?.data) ? data.data : [];
-    return list.map((p) => ({
-      value: p.id,
-      label: [p.name, p.barcode?.trim() || '—', `stok ${p.stock}`].join(' · '),
-      product: p,
-    }));
+    return list.map((p) => {
+      const isLocked = !!p.is_locked_audit;
+      const bits = [p.name, p.barcode?.trim() || '—', `stok ${p.stock}`];
+      if (isLocked) bits.push('(SEDANG DIAUDIT)');
+      return {
+        value: p.id,
+        label: bits.join(' · '),
+        isDisabled: isLocked,
+        product: p,
+      };
+    });
   } catch {
     return [];
   }

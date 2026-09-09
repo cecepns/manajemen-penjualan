@@ -161,6 +161,90 @@ async function ensureTablesAndSchema() {
     if (!colSet.has('session_start_at')) {
       await pool.query('ALTER TABLE users ADD COLUMN session_start_at DATETIME DEFAULT NULL');
     }
+
+    // 3. Tabel courier_scan_settings & default seed
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS courier_scan_settings (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        courier_name VARCHAR(100) NOT NULL,
+        prefix VARCHAR(50) NOT NULL,
+        sound_file VARCHAR(100) NOT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_courier_prefix (prefix),
+        KEY idx_courier_active (is_active)
+      ) ENGINE=InnoDB;
+    `);
+
+    const [[{ count_couriers }]] = await pool.query(
+      'SELECT COUNT(*) AS count_couriers FROM courier_scan_settings'
+    );
+    if (Number(count_couriers) === 0) {
+      await pool.query(`
+        INSERT INTO courier_scan_settings (courier_name, prefix, sound_file, is_active, sort_order) VALUES
+        ('SPX', 'SPXID', 'SPX.mpeg', 1, 1),
+        ('POS', 'SHPE', 'POS.mpeg', 1, 2),
+        ('ID Express', 'IDS', 'ID-EXPRESS.mpeg', 1, 3),
+        ('J&T', 'JY1', 'J&T.mpeg', 1, 4),
+        ('JNE YES', 'JY', 'JNE.mpeg', 1, 5),
+        ('JNE Reguler', 'CM', 'JNE.mpeg', 1, 6),
+        ('J&T Cargo', '2016', 'J&T-CARGO.mpeg', 1, 7),
+        ('Anteraja', '110', 'ANTERAJA.mpeg', 1, 8)
+      `);
+    }
+
+    // 4. Kolom last_audit_date pada tabel products
+    const [prodCols] = await pool.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products'
+    `);
+    const prodColSet = new Set(prodCols.map((c) => c.COLUMN_NAME));
+    if (!prodColSet.has('last_audit_date')) {
+      await pool.query('ALTER TABLE products ADD COLUMN last_audit_date DATE DEFAULT NULL');
+    }
+
+    // 5. Tabel stock_audit_sessions
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS stock_audit_sessions (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        session_code VARCHAR(50) NOT NULL UNIQUE,
+        status ENUM('in_progress', 'pending_approval', 'approved', 'rejected', 'cancelled') NOT NULL DEFAULT 'in_progress',
+        audit_date DATE NOT NULL,
+        notes TEXT DEFAULT NULL,
+        created_by INT UNSIGNED DEFAULT NULL,
+        approved_by INT UNSIGNED DEFAULT NULL,
+        approved_at DATETIME DEFAULT NULL,
+        rejection_reason TEXT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT fk_audit_session_creator FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_audit_session_approver FOREIGN KEY (approved_by) REFERENCES users (id) ON DELETE SET NULL,
+        KEY idx_audit_sessions_status (status),
+        KEY idx_audit_sessions_date (audit_date)
+      ) ENGINE=InnoDB;
+    `);
+
+    // 6. Tabel stock_audit_session_items
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS stock_audit_session_items (
+        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        session_id INT UNSIGNED NOT NULL,
+        product_id INT UNSIGNED NOT NULL,
+        system_stock INT NOT NULL DEFAULT 0,
+        physical_stock INT DEFAULT NULL,
+        delta_stock INT DEFAULT NULL,
+        item_notes VARCHAR(255) DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT fk_audit_item_session FOREIGN KEY (session_id) REFERENCES stock_audit_sessions (id) ON DELETE CASCADE,
+        CONSTRAINT fk_audit_item_product FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE,
+        UNIQUE KEY uk_session_product (session_id, product_id),
+        KEY idx_audit_item_product (product_id)
+      ) ENGINE=InnoDB;
+    `);
   } catch (err) {
     console.error('Error ensuring tables/schema:', err.message);
   }
@@ -244,6 +328,30 @@ async function logActivity({
     }
   } catch (e) {
     console.error('Gagal mencatat log aktivitas:', e);
+  }
+}
+
+/** Helper untuk mengecek apakah ada produk yang sedang dalam sesi audit aktif ('in_progress' atau 'pending_approval') */
+async function checkActiveAuditLock(connOrPool, productIds) {
+  const ids = (Array.isArray(productIds) ? productIds : [productIds])
+    .map(Number)
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (!ids.length) return null;
+  try {
+    const [rows] = await connOrPool.query(
+      `SELECT p.id, p.name, s.session_code, s.status 
+       FROM stock_audit_session_items i
+       JOIN stock_audit_sessions s ON s.id = i.session_id
+       JOIN products p ON p.id = i.product_id
+       WHERE i.product_id IN (${ids.map(() => '?').join(',')})
+         AND s.status IN ('in_progress', 'pending_approval')
+       LIMIT 1`,
+      ids
+    );
+    return rows[0] || null;
+  } catch (err) {
+    console.error('Error checking active audit lock:', err.message);
+    return null;
   }
 }
 
@@ -765,10 +873,16 @@ app.get('/api/stores/all', authRequired, staffExceptChecker, async (_req, res) =
 /* ——— Products ——— */
 app.get('/api/products', authRequired, staffExceptChecker, async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', sort_stock } = req.query;
+    const { page = 1, limit = 10, search = '', sort_stock, sort_audit, random, filter_audit } = req.query;
     const { page: p, limit: l, offset } = paginate(page, limit);
     const q = `%${String(search).trim()}%`;
-    const where = '(p.name LIKE ? OR IFNULL(p.barcode,"") LIKE ?)';
+    let where = '(p.name LIKE ? OR IFNULL(p.barcode,"") LIKE ?)';
+    if (filter_audit === 'never') {
+      where += ' AND p.last_audit_date IS NULL';
+    } else if (filter_audit === 'audited') {
+      where += ' AND p.last_audit_date IS NOT NULL';
+    }
+
     const params = [q, q];
     const [countRows] = await pool.query(
       `SELECT COUNT(*) AS c FROM products p WHERE ${where}`,
@@ -778,8 +892,23 @@ app.get('/api/products', authRequired, staffExceptChecker, async (req, res) => {
     let orderSql = 'ORDER BY p.updated_at DESC';
     if (sort_stock === 'asc') orderSql = 'ORDER BY p.stock ASC, p.updated_at DESC';
     else if (sort_stock === 'desc') orderSql = 'ORDER BY p.stock DESC, p.updated_at DESC';
+    else if (sort_audit === 'asc') orderSql = 'ORDER BY (p.last_audit_date IS NULL) DESC, p.last_audit_date ASC, p.id ASC';
+    else if (sort_audit === 'desc') orderSql = 'ORDER BY p.last_audit_date DESC, p.id DESC';
+    else if (random === '1' || random === 'true') orderSql = 'ORDER BY (p.last_audit_date IS NULL) DESC, RAND()';
+
     const [rows] = await pool.query(
-      `SELECT p.* FROM products p
+      `SELECT p.*,
+        (SELECT s.session_code 
+         FROM stock_audit_session_items i 
+         JOIN stock_audit_sessions s ON s.id = i.session_id 
+         WHERE i.product_id = p.id AND s.status IN ('in_progress', 'pending_approval')
+         LIMIT 1) AS active_audit_session,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM stock_audit_session_items i 
+          JOIN stock_audit_sessions s ON s.id = i.session_id 
+          WHERE i.product_id = p.id AND s.status IN ('in_progress', 'pending_approval')
+        ) THEN 1 ELSE 0 END AS is_locked_audit
+       FROM products p
        WHERE ${where}
        ${orderSql} LIMIT ? OFFSET ?`,
       [...params, l, offset]
@@ -828,6 +957,15 @@ app.post('/api/products/:id/stock-in', authRequired, staffExceptChecker, async (
       await conn.rollback();
       return res.status(404).json({ message: 'Produk tidak ada' });
     }
+
+    const locked = await checkActiveAuditLock(conn, req.params.id);
+    if (locked) {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Produk "${locked.name}" sedang dalam proses audit stok (Sesi ${locked.session_code}). Stok tidak dapat ditambahkan sampai audit selesai disetujui / dibatalkan.`,
+      });
+    }
+
     const before = Number(current.stock) || 0;
     const after = before + added;
 
@@ -986,6 +1124,583 @@ app.get('/api/stock-audit-history', authRequired, staffExceptChecker, async (req
   } catch (e) {
     console.error(e);
     res.status(500).json({ message: 'Gagal memuat histori audit stok' });
+  }
+});
+
+/* ——— Courier Scan Settings ——— */
+app.get('/api/courier-settings', authRequired, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT * FROM courier_scan_settings ORDER BY sort_order ASC, id ASC`
+    );
+    const availableSounds = [
+      'SPX.mpeg',
+      'POS.mpeg',
+      'ID-EXPRESS.mpeg',
+      'JNE.mpeg',
+      'J&T.mpeg',
+      'J&T-CARGO.mpeg',
+      'ANTERAJA.mpeg',
+    ];
+    res.json({ data: rows, available_sounds: availableSounds });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat pengaturan kurir' });
+  }
+});
+
+app.post('/api/courier-settings', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const { courier_name, prefix, sound_file, is_active, sort_order } = req.body || {};
+    if (!courier_name?.trim() || !prefix?.trim()) {
+      return res.status(400).json({ message: 'Nama ekspedisi dan prefix wajib diisi' });
+    }
+    const sound = sound_file?.trim() || 'SPX.mpeg';
+    const active = is_active === false || is_active === 0 ? 0 : 1;
+    const sort = Number(sort_order) || 0;
+
+    const [r] = await pool.query(
+      `INSERT INTO courier_scan_settings (courier_name, prefix, sound_file, is_active, sort_order)
+       VALUES (?, ?, ?, ?, ?)`,
+      [courier_name.trim(), prefix.trim().toUpperCase(), sound, active, sort]
+    );
+
+    await logActivity({
+      req,
+      action: 'CREATE_COURIER_SETTING',
+      entityType: 'settings',
+      entityId: r.insertId,
+      reference: courier_name.trim(),
+      description: `Menambahkan prefix ekspedisi baru: ${courier_name.trim()} (${prefix.trim().toUpperCase()} -> ${sound})`,
+      beforeData: null,
+      afterData: { courier_name, prefix: prefix.trim().toUpperCase(), sound_file: sound },
+    });
+
+    res.status(201).json({ id: r.insertId, message: 'Pengaturan prefix ekspedisi disimpan' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menambah pengaturan kurir' });
+  }
+});
+
+app.put('/api/courier-settings/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const { courier_name, prefix, sound_file, is_active, sort_order } = req.body || {};
+    if (!courier_name?.trim() || !prefix?.trim()) {
+      return res.status(400).json({ message: 'Nama ekspedisi dan prefix wajib diisi' });
+    }
+    const sound = sound_file?.trim() || 'SPX.mpeg';
+    const active = is_active === false || is_active === 0 ? 0 : 1;
+    const sort = Number(sort_order) || 0;
+
+    const [oldRows] = await pool.query('SELECT * FROM courier_scan_settings WHERE id = ?', [req.params.id]);
+    const oldSetting = oldRows[0];
+
+    await pool.query(
+      `UPDATE courier_scan_settings 
+       SET courier_name = ?, prefix = ?, sound_file = ?, is_active = ?, sort_order = ?
+       WHERE id = ?`,
+      [courier_name.trim(), prefix.trim().toUpperCase(), sound, active, sort, req.params.id]
+    );
+
+    await logActivity({
+      req,
+      action: 'UPDATE_COURIER_SETTING',
+      entityType: 'settings',
+      entityId: req.params.id,
+      reference: courier_name.trim(),
+      description: `Mengubah prefix ekspedisi: ${courier_name.trim()} (${prefix.trim().toUpperCase()} -> ${sound})`,
+      beforeData: oldSetting,
+      afterData: { courier_name, prefix: prefix.trim().toUpperCase(), sound_file: sound, is_active: active },
+    });
+
+    res.json({ ok: true, message: 'Pengaturan prefix ekspedisi diperbarui' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal mengubah pengaturan kurir' });
+  }
+});
+
+app.delete('/api/courier-settings/:id', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+  try {
+    const [oldRows] = await pool.query('SELECT * FROM courier_scan_settings WHERE id = ?', [req.params.id]);
+    const oldSetting = oldRows[0];
+
+    await pool.query(`DELETE FROM courier_scan_settings WHERE id = ?`, [req.params.id]);
+
+    if (oldSetting) {
+      await logActivity({
+        req,
+        action: 'DELETE_COURIER_SETTING',
+        entityType: 'settings',
+        entityId: req.params.id,
+        reference: oldSetting.courier_name,
+        description: `Menghapus prefix ekspedisi: ${oldSetting.courier_name} (${oldSetting.prefix})`,
+        beforeData: oldSetting,
+        afterData: null,
+      });
+    }
+
+    res.json({ ok: true, message: 'Pengaturan prefix ekspedisi dihapus' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menghapus pengaturan kurir' });
+  }
+});
+
+/* ——— Stock Audit Sessions (Opname Fisik Berbasis Approval) ——— */
+app.get('/api/stock-audit-sessions', authRequired, staffExceptChecker, async (req, res) => {
+  try {
+    const { page = 1, limit = 10, status = '', search = '' } = req.query;
+    const { page: p, limit: l, offset } = paginate(page, limit);
+
+    let whereClause = '1=1';
+    const params = [];
+
+    if (status && ['in_progress', 'pending_approval', 'approved', 'rejected', 'cancelled'].includes(status)) {
+      whereClause += ' AND s.status = ?';
+      params.push(status);
+    }
+
+    if (search?.trim()) {
+      const q = `%${search.trim()}%`;
+      whereClause += ' AND (s.session_code LIKE ? OR IFNULL(s.notes,"") LIKE ? OR u.name LIKE ?)';
+      params.push(q, q, q);
+    }
+
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS c 
+       FROM stock_audit_sessions s
+       LEFT JOIN users u ON u.id = s.created_by
+       WHERE ${whereClause}`,
+      params
+    );
+    const total = countRows[0].c;
+
+    const [rows] = await pool.query(
+      `SELECT s.*, 
+              u.name AS created_by_name, 
+              u_app.name AS approved_by_name,
+              COUNT(i.id) AS total_items,
+              COALESCE(SUM(CASE WHEN i.physical_stock IS NOT NULL THEN 1 ELSE 0 END), 0) AS counted_items,
+              COALESCE(SUM(i.delta_stock), 0) AS total_delta,
+              COALESCE(SUM(CASE WHEN i.delta_stock != 0 AND i.physical_stock IS NOT NULL THEN 1 ELSE 0 END), 0) AS total_discrepancies
+       FROM stock_audit_sessions s
+       LEFT JOIN users u ON u.id = s.created_by
+       LEFT JOIN users u_app ON u_app.id = s.approved_by
+       LEFT JOIN stock_audit_session_items i ON i.session_id = s.id
+       WHERE ${whereClause}
+       GROUP BY s.id
+       ORDER BY s.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, l, offset]
+    );
+
+    res.json({ data: rows, page: p, limit: l, total });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat sesi audit' });
+  }
+});
+
+app.get('/api/stock-audit-sessions/:id', authRequired, staffExceptChecker, async (req, res) => {
+  try {
+    const [sessRows] = await pool.query(
+      `SELECT s.*, 
+              u.name AS created_by_name, 
+              u_app.name AS approved_by_name
+       FROM stock_audit_sessions s
+       LEFT JOIN users u ON u.id = s.created_by
+       LEFT JOIN users u_app ON u_app.id = s.approved_by
+       WHERE s.id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    const session = sessRows[0];
+    if (!session) return res.status(404).json({ message: 'Sesi audit tidak ditemukan' });
+
+    const [items] = await pool.query(
+      `SELECT i.*, 
+              p.name AS product_name, 
+              p.barcode AS product_barcode, 
+              p.photo_url AS product_photo,
+              p.hpp AS product_hpp,
+              p.stock AS current_stock
+       FROM stock_audit_session_items i
+       JOIN products p ON p.id = i.product_id
+       WHERE i.session_id = ?
+       ORDER BY p.name ASC`,
+      [req.params.id]
+    );
+
+    res.json({ session, items });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal memuat detail sesi audit' });
+  }
+});
+
+app.post('/api/stock-audit-sessions', authRequired, staffExceptChecker, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { product_ids, audit_date, notes } = req.body || {};
+    const ids = Array.isArray(product_ids)
+      ? product_ids.map(Number).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+
+    if (!ids.length) {
+      return res.status(400).json({ message: 'Pilih minimal satu produk untuk diaudit' });
+    }
+
+    let auditDate = typeof audit_date === 'string' ? audit_date.trim() : '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(auditDate)) {
+      auditDate = new Date().toISOString().slice(0, 10);
+    }
+
+    await conn.beginTransaction();
+
+    // Pastikan tidak ada produk yang sedang dalam sesi audit lain yang masih aktif
+    const locked = await checkActiveAuditLock(conn, ids);
+    if (locked) {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Produk "${locked.name}" sedang dalam proses audit aktif (${locked.session_code}). Tidak dapat diaudit ganda.`,
+      });
+    }
+
+    // Ambil data stok sistem produk saat ini
+    const [products] = await conn.query(
+      `SELECT id, name, stock FROM products WHERE id IN (${ids.map(() => '?').join(',')})`,
+      ids
+    );
+    if (!products.length) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Produk tidak ditemukan' });
+    }
+
+    // Generate kode sesi unik AUD-YYYYMMDD-XXX
+    const datePrefix = auditDate.replace(/-/g, '');
+    const [[{ lastSeq }]] = await conn.query(
+      `SELECT COUNT(*) AS lastSeq FROM stock_audit_sessions WHERE session_code LIKE ?`,
+      [`AUD-${datePrefix}-%`]
+    );
+    const seqNum = String(Number(lastSeq) + 1).padStart(3, '0');
+    const sessionCode = `AUD-${datePrefix}-${seqNum}`;
+
+    const [sessRes] = await conn.query(
+      `INSERT INTO stock_audit_sessions (session_code, status, audit_date, notes, created_by)
+       VALUES (?, 'in_progress', ?, ?, ?)`,
+      [sessionCode, auditDate, notes?.trim() || null, req.user?.id || null]
+    );
+    const sessionId = sessRes.insertId;
+
+    // Simpan item-item audit dengan snapshot system_stock
+    for (const p of products) {
+      await conn.query(
+        `INSERT INTO stock_audit_session_items (session_id, product_id, system_stock)
+         VALUES (?, ?, ?)`,
+        [sessionId, p.id, Number(p.stock) || 0]
+      );
+    }
+
+    await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'START_STOCK_AUDIT',
+      entityType: 'stock_audit_sessions',
+      entityId: sessionId,
+      reference: sessionCode,
+      description: `Memulai sesi audit fisik (${sessionCode}) dengan ${products.length} produk - status: Sedang Berjalan (Produk dikunci dari transaksi)`,
+      beforeData: null,
+      afterData: { session_code: sessionCode, total_items: products.length, audit_date: auditDate },
+    });
+
+    res.status(201).json({
+      id: sessionId,
+      session_code: sessionCode,
+      total_items: products.length,
+      message: 'Sesi audit fisik dimulai. Produk terkunci dari transaksi sampai audit disetujui / dibatalkan.',
+    });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ message: 'Gagal membuat sesi audit' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.put('/api/stock-audit-sessions/:id/physical-counts', authRequired, staffExceptChecker, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { items, notes } = req.body || {};
+    if (!Array.isArray(items) || !items.length) {
+      return res.status(400).json({ message: 'Data hitungan fisik wajib ada' });
+    }
+
+    await conn.beginTransaction();
+
+    const [sessRows] = await conn.query(
+      `SELECT * FROM stock_audit_sessions WHERE id = ? FOR UPDATE`,
+      [req.params.id]
+    );
+    const session = sessRows[0];
+    if (!session) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Sesi audit tidak ditemukan' });
+    }
+    if (session.status !== 'in_progress' && session.status !== 'pending_approval') {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Sesi audit berstatus "${session.status}", tidak dapat diubah lagi.`,
+      });
+    }
+
+    let updatedCount = 0;
+    for (const it of items) {
+      const prodId = Number(it.product_id);
+      if (!prodId) continue;
+      const physicalStock = it.physical_stock !== null && it.physical_stock !== undefined && it.physical_stock !== ''
+        ? Math.max(0, Math.floor(Number(it.physical_stock) || 0))
+        : null;
+      const itemNote = it.item_notes ? String(it.item_notes).trim().slice(0, 255) : null;
+
+      if (physicalStock !== null) {
+        await conn.query(
+          `UPDATE stock_audit_session_items 
+           SET physical_stock = ?, delta_stock = ? - system_stock, item_notes = ?
+           WHERE session_id = ? AND product_id = ?`,
+          [physicalStock, physicalStock, itemNote, req.params.id, prodId]
+        );
+        updatedCount++;
+      }
+    }
+
+    const sessionNotes = notes !== undefined ? (notes?.trim() || null) : session.notes;
+
+    // Ubah status ke pending_approval jika sudah ada hitungan fisik
+    await conn.query(
+      `UPDATE stock_audit_sessions 
+       SET status = 'pending_approval', notes = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [sessionNotes, req.params.id]
+    );
+
+    await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'INPUT_AUDIT_COUNTS',
+      entityType: 'stock_audit_sessions',
+      entityId: req.params.id,
+      reference: session.session_code,
+      description: `Menginput hasil hitungan fisik untuk ${updatedCount} produk pada sesi ${session.session_code} - status diubah ke "Menunggu Approval Owner"`,
+      beforeData: { status: session.status },
+      afterData: { status: 'pending_approval', updated_items: updatedCount },
+    });
+
+    res.json({
+      ok: true,
+      message: 'Hasil hitungan fisik disimpan. Menunggu persetujuan Owner untuk menyesuaikan stok.',
+    });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menyimpan hitungan fisik' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/stock-audit-sessions/:id/approve', authRequired, ownerOnly, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [sessRows] = await conn.query(
+      `SELECT * FROM stock_audit_sessions WHERE id = ? FOR UPDATE`,
+      [req.params.id]
+    );
+    const session = sessRows[0];
+    if (!session) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Sesi audit tidak ditemukan' });
+    }
+    if (session.status !== 'pending_approval' && session.status !== 'in_progress') {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Sesi audit berstatus "${session.status}", tidak dapat diapprove.`,
+      });
+    }
+
+    const [items] = await conn.query(
+      `SELECT i.*, p.name AS product_name, p.stock AS current_stock
+       FROM stock_audit_session_items i
+       JOIN products p ON p.id = i.product_id
+       WHERE i.session_id = ?`,
+      [req.params.id]
+    );
+
+    const uncounted = items.filter((it) => it.physical_stock === null);
+    if (uncounted.length > 0) {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Terdapat ${uncounted.length} produk yang belum diisi hitungan fisiknya.`,
+      });
+    }
+
+    let adjustedItems = 0;
+    for (const it of items) {
+      const before = Number(it.current_stock);
+      const after = Number(it.physical_stock);
+      const delta = after - before;
+
+      // Update stok produk dan tanggal terakhir audit
+      await conn.query(
+        `UPDATE products SET stock = ?, last_audit_date = ? WHERE id = ?`,
+        [after, session.audit_date, it.product_id]
+      );
+
+      // Catat ke stock_audit_history jika ada penyesuaian atau untuk jejak audit
+      await conn.query(
+        `INSERT INTO stock_audit_history 
+         (product_id, qty_before, qty_after, qty_delta, session_notes, audit_date, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          it.product_id,
+          before,
+          after,
+          delta,
+          `Audit ${session.session_code}${it.item_notes ? ` - ${it.item_notes}` : ''}`,
+          session.audit_date,
+          req.user.id,
+        ]
+      );
+      adjustedItems++;
+    }
+
+    // Setujui sesi
+    await conn.query(
+      `UPDATE stock_audit_sessions 
+       SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [req.user.id, req.params.id]
+    );
+
+    await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'APPROVE_STOCK_AUDIT',
+      entityType: 'stock_audit_sessions',
+      entityId: req.params.id,
+      reference: session.session_code,
+      description: `Owner menyetujui sesi audit (${session.session_code}). Stok produk disesuaikan untuk ${adjustedItems} item, dan kunci transaksi dilepas.`,
+      beforeData: { status: session.status },
+      afterData: { status: 'approved', approved_by: req.user.name, total_adjusted: adjustedItems },
+    });
+
+    res.json({
+      ok: true,
+      message: `Audit ${session.session_code} berhasil disetujui. Stok ${adjustedItems} produk telah disesuaikan dan kunci transaksi dilepas.`,
+    });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menyetujui audit stok' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/stock-audit-sessions/:id/reject', authRequired, ownerOnly, async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { reason } = req.body || {};
+    await conn.beginTransaction();
+
+    const [sessRows] = await conn.query(
+      `SELECT * FROM stock_audit_sessions WHERE id = ? FOR UPDATE`,
+      [req.params.id]
+    );
+    const session = sessRows[0];
+    if (!session) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Sesi audit tidak ditemukan' });
+    }
+    if (session.status === 'approved' || session.status === 'rejected' || session.status === 'cancelled') {
+      await conn.rollback();
+      return res.status(400).json({
+        message: `Sesi audit sudah berstatus "${session.status}".`,
+      });
+    }
+
+    await conn.query(
+      `UPDATE stock_audit_sessions 
+       SET status = 'rejected', rejection_reason = ?, approved_by = ?, approved_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [reason?.trim() || 'Ditolak oleh Owner', req.user.id, req.params.id]
+    );
+
+    await conn.commit();
+
+    await logActivity({
+      req,
+      action: 'REJECT_STOCK_AUDIT',
+      entityType: 'stock_audit_sessions',
+      entityId: req.params.id,
+      reference: session.session_code,
+      description: `Owner menolak sesi audit (${session.session_code}). Alasan: "${reason || 'Ditolak'}". Kunci transaksi dilepas tanpa mengubah stok.`,
+      beforeData: { status: session.status },
+      afterData: { status: 'rejected', reason },
+    });
+
+    res.json({
+      ok: true,
+      message: `Sesi audit ${session.session_code} ditolak. Kunci transaksi produk dilepas tanpa perubahan stok.`,
+    });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ message: 'Gagal menolak sesi audit' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.delete('/api/stock-audit-sessions/:id', authRequired, staffExceptChecker, async (req, res) => {
+  try {
+    const [sessRows] = await pool.query(
+      `SELECT * FROM stock_audit_sessions WHERE id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    const session = sessRows[0];
+    if (!session) return res.status(404).json({ message: 'Sesi audit tidak ditemukan' });
+
+    if (session.status === 'approved') {
+      return res.status(400).json({ message: 'Sesi audit yang sudah disetujui tidak dapat dibatalkan' });
+    }
+
+    await pool.query(
+      `UPDATE stock_audit_sessions SET status = 'cancelled', updated_at = NOW() WHERE id = ?`,
+      [req.params.id]
+    );
+
+    await logActivity({
+      req,
+      action: 'CANCEL_STOCK_AUDIT',
+      entityType: 'stock_audit_sessions',
+      entityId: req.params.id,
+      reference: session.session_code,
+      description: `Membatalkan sesi audit (${session.session_code}). Kunci transaksi produk dilepas.`,
+      beforeData: { status: session.status },
+      afterData: { status: 'cancelled' },
+    });
+
+    res.json({ ok: true, message: `Sesi audit ${session.session_code} dibatalkan. Kunci transaksi dilepas.` });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: 'Gagal membatalkan sesi audit' });
   }
 });
 
@@ -1643,10 +2358,37 @@ app.post('/api/orders/mark-dikirim', authRequired, async (req, res) => {
       afterData: { status: 'dikirim' },
     });
 
+    // Deteksi ekspedisi berdasarkan prefix resi / code
+    let detectedCourier = null;
+    try {
+      const [couriers] = await pool.query(
+        `SELECT courier_name, prefix, sound_file 
+         FROM courier_scan_settings 
+         WHERE is_active = 1 
+         ORDER BY CHAR_LENGTH(prefix) DESC, sort_order ASC`
+      );
+      const targetStr = String(groupRows[0].resi || code || '').trim().toUpperCase();
+      for (const c of couriers) {
+        const pfx = String(c.prefix || '').trim().toUpperCase();
+        if (pfx && targetStr.startsWith(pfx)) {
+          detectedCourier = {
+            name: c.courier_name,
+            prefix: c.prefix,
+            sound_file: c.sound_file,
+          };
+          break;
+        }
+      }
+    } catch (courierErr) {
+      console.error('Error detecting courier:', courierErr.message);
+    }
+
     res.json({
       ok: true,
       order_no: groupRows[0].order_no,
+      resi: groupRows[0].resi || null,
       line_count: ids.length,
+      courier: detectedCourier,
       message: 'Status diubah ke Dikirim',
     });
   } catch (e) {
@@ -1886,6 +2628,16 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
         });
 
       await conn.beginTransaction();
+
+      const multiProdIds = items.map((it) => it.product_id).filter(Boolean);
+      const lockedMulti = await checkActiveAuditLock(conn, multiProdIds);
+      if (lockedMulti) {
+        await conn.rollback();
+        return res.status(400).json({
+          message: `Produk "${lockedMulti.name}" sedang dalam proses audit stok (Sesi ${lockedMulti.session_code}). Transaksi diblokir sampai audit selesai disetujui / dibatalkan.`,
+        });
+      }
+
       const ids = [];
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
@@ -2010,6 +2762,13 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
     let productHpp = null;
 
     if (product_id) {
+      const lockedSingle = await checkActiveAuditLock(conn, product_id);
+      if (lockedSingle) {
+        return res.status(400).json({
+          message: `Produk "${lockedSingle.name}" sedang dalam proses audit stok (Sesi ${lockedSingle.session_code}). Transaksi diblokir sampai audit selesai disetujui / dibatalkan.`,
+        });
+      }
+
       const [prows] = await conn.query(
         'SELECT hpp, stock FROM products WHERE id = ? FOR UPDATE',
         [product_id]
@@ -2150,6 +2909,17 @@ app.put('/api/orders/group', authRequired, staffExceptChecker, async (req, res) 
     if (keys.size !== 1) {
       return res.status(400).json({
         message: 'line_ids harus dari satu pesanan yang sama',
+      });
+    }
+
+    const groupProdIds = [
+      ...existing.map((r) => r.product_id),
+      ...items.map((it) => it.product_id),
+    ].filter(Boolean);
+    const lockedGroup = await checkActiveAuditLock(conn, groupProdIds);
+    if (lockedGroup) {
+      return res.status(400).json({
+        message: `Produk "${lockedGroup.name}" sedang dalam proses audit stok (Sesi ${lockedGroup.session_code}). Transaksi diblokir sampai audit selesai disetujui / dibatalkan.`,
       });
     }
 
@@ -2376,6 +3146,15 @@ app.put('/api/orders/:id', authRequired, staffExceptChecker, async (req, res) =>
           ? Number(body.product_id)
           : null
         : prev.product_id;
+
+    const pids = [product_id, prev.product_id].filter(Boolean);
+    const lockedSingle = await checkActiveAuditLock(conn, pids);
+    if (lockedSingle) {
+      return res.status(400).json({
+        message: `Produk "${lockedSingle.name}" sedang dalam proses audit stok (Sesi ${lockedSingle.session_code}). Transaksi diblokir sampai audit selesai disetujui / dibatalkan.`,
+      });
+    }
+
     let productHpp = null;
     if (product_id) {
       const [prows] = await conn.query(

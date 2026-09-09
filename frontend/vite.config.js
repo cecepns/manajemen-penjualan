@@ -5,6 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig({
   // Path relatif agar CSS/JS tetap ketemu saat buka file lokal, subpath, atau static dari Express
   base: './',
+  assetsInclude: ['**/*.mpeg'],
   plugins: [
     react(),
     VitePWA({

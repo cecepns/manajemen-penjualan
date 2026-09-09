@@ -3,6 +3,8 @@ import soundIdExpress from '../assets/sound-scan/ID-EXPRESS.mpeg';
 import soundJtCargo from '../assets/sound-scan/J&T-CARGO.mpeg';
 import soundJt from '../assets/sound-scan/J&T.mpeg';
 import soundJne from '../assets/sound-scan/JNE.mpeg';
+import soundJneReguler from '../assets/sound-scan/JNE-REGULER.mpeg';
+import soundJneYes from '../assets/sound-scan/JNE-YES.mpeg';
 import soundPos from '../assets/sound-scan/POS.mpeg';
 import soundSpx from '../assets/sound-scan/SPX.mpeg';
 
@@ -11,6 +13,8 @@ export const COURIER_SOUND_MAP = {
   'ID-EXPRESS.mpeg': soundIdExpress,
   'J&T-CARGO.mpeg': soundJtCargo,
   'J&T.mpeg': soundJt,
+  'JNE-REGULER.mpeg': soundJneReguler,
+  'JNE-YES.mpeg': soundJneYes,
   'JNE.mpeg': soundJne,
   'POS.mpeg': soundPos,
   'SPX.mpeg': soundSpx,
@@ -21,7 +25,9 @@ export const AVAILABLE_SOUNDS = [
   { file: 'POS.mpeg', label: 'POS Indonesia' },
   { file: 'ID-EXPRESS.mpeg', label: 'ID Express' },
   { file: 'J&T.mpeg', label: 'J&T Express' },
-  { file: 'JNE.mpeg', label: 'JNE Express' },
+  { file: 'JNE-REGULER.mpeg', label: 'JNE Reguler' },
+  { file: 'JNE-YES.mpeg', label: 'JNE YES' },
+  { file: 'JNE.mpeg', label: 'JNE (Umum)' },
   { file: 'J&T-CARGO.mpeg', label: 'J&T Cargo' },
   { file: 'ANTERAJA.mpeg', label: 'Anteraja' },
 ];

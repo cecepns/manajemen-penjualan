@@ -188,11 +188,18 @@ async function ensureTablesAndSchema() {
         ('POS', 'SHPE', 'POS.mpeg', 1, 2),
         ('ID Express', 'IDS', 'ID-EXPRESS.mpeg', 1, 3),
         ('J&T', 'JY1', 'J&T.mpeg', 1, 4),
-        ('JNE YES', 'JY', 'JNE.mpeg', 1, 5),
-        ('JNE Reguler', 'CM', 'JNE.mpeg', 1, 6),
+        ('JNE YES', 'JY', 'JNE-YES.mpeg', 1, 5),
+        ('JNE Reguler', 'CM', 'JNE-REGULER.mpeg', 1, 6),
         ('J&T Cargo', '2016', 'J&T-CARGO.mpeg', 1, 7),
         ('Anteraja', '110', 'ANTERAJA.mpeg', 1, 8)
       `);
+    } else {
+      await pool.query(
+        "UPDATE courier_scan_settings SET sound_file = 'JNE-YES.mpeg' WHERE courier_name = 'JNE YES' AND sound_file = 'JNE.mpeg'"
+      ).catch(() => {});
+      await pool.query(
+        "UPDATE courier_scan_settings SET sound_file = 'JNE-REGULER.mpeg' WHERE courier_name = 'JNE Reguler' AND sound_file = 'JNE.mpeg'"
+      ).catch(() => {});
     }
 
     // 4. Kolom last_audit_date pada tabel products
@@ -1137,6 +1144,8 @@ app.get('/api/courier-settings', authRequired, async (req, res) => {
       'SPX.mpeg',
       'POS.mpeg',
       'ID-EXPRESS.mpeg',
+      'JNE-REGULER.mpeg',
+      'JNE-YES.mpeg',
       'JNE.mpeg',
       'J&T.mpeg',
       'J&T-CARGO.mpeg',

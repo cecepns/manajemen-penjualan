@@ -22,12 +22,16 @@ SELECT * FROM (
   SELECT 'POS', 'SHPE', 'POS.mpeg', 1, 2 UNION ALL
   SELECT 'ID Express', 'IDS', 'ID-EXPRESS.mpeg', 1, 3 UNION ALL
   SELECT 'J&T', 'JY1', 'J&T.mpeg', 1, 4 UNION ALL
-  SELECT 'JNE YES', 'JY', 'JNE.mpeg', 1, 5 UNION ALL
-  SELECT 'JNE Reguler', 'CM', 'JNE.mpeg', 1, 6 UNION ALL
+  SELECT 'JNE YES', 'JY', 'JNE-YES.mpeg', 1, 5 UNION ALL
+  SELECT 'JNE Reguler', 'CM', 'JNE-REGULER.mpeg', 1, 6 UNION ALL
   SELECT 'J&T Cargo', '2016', 'J&T-CARGO.mpeg', 1, 7 UNION ALL
   SELECT 'Anteraja', '110', 'ANTERAJA.mpeg', 1, 8
 ) AS tmp
 WHERE NOT EXISTS (SELECT 1 FROM courier_scan_settings LIMIT 1);
+
+-- Jika tabel sudah ada dan masih menggunakan JNE.mpeg, jalankan update ini:
+UPDATE courier_scan_settings SET sound_file = 'JNE-YES.mpeg' WHERE courier_name = 'JNE YES' AND sound_file = 'JNE.mpeg';
+UPDATE courier_scan_settings SET sound_file = 'JNE-REGULER.mpeg' WHERE courier_name = 'JNE Reguler' AND sound_file = 'JNE.mpeg';
 
 -- 2. Kolom tanggal terakhir diaudit pada tabel products
 ALTER TABLE products ADD COLUMN last_audit_date DATE DEFAULT NULL;

@@ -646,16 +646,16 @@ export default function StockAuditPage() {
                           </div>
 
                           {isSelected ? (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-100 text-blue-800">
+                            <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-800">
                               Dipilih
                             </span>
                           ) : isLocked ? (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-200 text-amber-900 flex items-center gap-1">
-                              <Lock size={11} /> Sedang Diaudit
+                            <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
+                              <Lock size={12} /> Sedang Diaudit
                             </span>
                           ) : (
-                            <span className="btn btn-secondary btn-sm !py-1 !px-2 text-xs font-semibold flex items-center gap-1 text-blue-700">
-                              <Plus size={14} /> Pilih
+                            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition">
+                              <Plus size={14} strokeWidth={2.5} /> Pilih
                             </span>
                           )}
                         </div>

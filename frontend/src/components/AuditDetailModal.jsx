@@ -115,6 +115,25 @@ export default function AuditDetailModal({ open, onClose, sessionId, onRefresh }
     return { totalItems, filledCount, totalDeltaUnits, totalDeltaHpp, discrepancyCount };
   }, [items, counts]);
 
+  const printableItems = useMemo(() => {
+    return items.map((it) => {
+      const rawVal = counts[it.product_id];
+      const hasCount = rawVal !== '' && rawVal !== undefined && rawVal !== null;
+      const physicalVal = hasCount ? Number(rawVal) : it.physical_stock;
+      const noteVal = notes[it.product_id] !== undefined ? notes[it.product_id] : it.item_notes;
+      const deltaVal =
+        physicalVal !== null && physicalVal !== undefined
+          ? Number(physicalVal) - Number(it.system_stock)
+          : it.delta_stock;
+      return {
+        ...it,
+        physical_stock: physicalVal,
+        delta_stock: deltaVal,
+        item_notes: noteVal,
+      };
+    });
+  }, [items, counts, notes]);
+
   async function handleSaveCounts(e) {
     e.preventDefault();
     if (summary.filledCount === 0) {
@@ -569,7 +588,7 @@ export default function AuditDetailModal({ open, onClose, sessionId, onRefresh }
         open={printOpen}
         onClose={() => setPrintOpen(false)}
         session={session}
-        items={items}
+        items={printableItems}
       />
     </Modal>
   );

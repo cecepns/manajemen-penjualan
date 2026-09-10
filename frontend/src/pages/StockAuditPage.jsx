@@ -498,11 +498,11 @@ export default function StockAuditPage() {
       {activeTab === 'create' && (
         <form onSubmit={handleStartAudit} className="space-y-4">
           {/* Header Form Input Tanggal & Info */}
-          <div className="card p-4 flex flex-wrap items-center justify-between gap-4 bg-gradient-to-r from-slate-50 to-blue-50/40 border border-blue-200/60">
-            <div className="space-y-1">
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Layers className="text-blue-600" size={20} />
-                Pilih Produk untuk Audit Stok Fisik
+          <div className="card p-3 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-slate-50 to-blue-50/40 border border-blue-200/60 min-w-0">
+            <div className="space-y-1 min-w-0">
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+                <Layers className="text-blue-600 shrink-0" size={20} />
+                <span>Pilih Produk untuk Audit Stok Fisik</span>
               </h2>
               <p className="text-xs text-slate-600 max-w-2xl leading-relaxed">
                 Pilih produk yang akan diperiksa fisiknya di rak gudang. Produk yang masuk ke sesi ini
@@ -511,13 +511,13 @@ export default function StockAuditPage() {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
               <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200">
-                <Calendar size={15} className="text-slate-400" />
-                <span className="text-xs font-semibold text-slate-700">Tgl Audit:</span>
+                <Calendar size={15} className="text-slate-400 shrink-0" />
+                <span className="text-xs font-semibold text-slate-700 whitespace-nowrap">Tgl Audit:</span>
                 <input
                   type="date"
-                  className="!border-none !p-0 text-xs font-semibold text-slate-900 focus:ring-0"
+                  className="!border-none !p-0 text-xs font-semibold text-slate-900 focus:ring-0 w-full"
                   value={auditDate}
                   onChange={(e) => setAuditDate(e.target.value)}
                 />
@@ -525,18 +525,18 @@ export default function StockAuditPage() {
 
               <button
                 type="submit"
-                className="btn btn-primary flex items-center gap-2 shadow-lg shadow-blue-600/20 font-semibold"
+                className="btn btn-primary flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 font-semibold text-xs sm:text-sm py-2"
                 disabled={startingAudit || selectedProducts.length === 0}
               >
-                <Printer size={17} />
+                <Printer size={16} />
                 {startingAudit ? 'Membuat Sesi…' : `Mulai Audit & Cetak Form (${selectedProducts.length})`}
               </button>
             </div>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-12">
+          <div className="grid gap-4 lg:grid-cols-12 min-w-0">
             {/* Panel Kiri: Pencarian & Randomizer Produk (7 cols) */}
-            <div className="card flex flex-col min-h-[480px] lg:col-span-7 space-y-3">
+            <div className="card flex flex-col min-h-[480px] lg:col-span-7 space-y-3 min-w-0 overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-bold text-slate-800">Daftar Produk Gudang</h3>
 
@@ -562,7 +562,7 @@ export default function StockAuditPage() {
                   className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
                 />
                 <input
-                  className="w-full !pl-10 text-sm"
+                  className="w-full !pl-10 text-xs sm:text-sm"
                   placeholder="Cari nama produk atau barcode…"
                   value={productSearch}
                   onChange={(e) => setProductSearch(e.target.value)}
@@ -570,18 +570,18 @@ export default function StockAuditPage() {
               </div>
 
               {/* Fitur Tombol Pilih Acak (Randomizer) */}
-              <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-indigo-950">
-                  <Dices size={20} className="text-indigo-600" />
-                  <div>
-                    <div className="text-xs font-bold">Pilih Acak (Sampling Fisik Acak)</div>
-                    <div className="text-[11px] text-indigo-800">
-                      Ambil sampel acak produk yang belum / paling lama tidak diaudit
+              <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 text-indigo-950 min-w-0">
+                  <Dices size={20} className="text-indigo-600 shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold truncate">Pilih Acak (Sampling Fisik Acak)</div>
+                    <div className="text-[11px] text-indigo-800 line-clamp-1">
+                      Ambil sampel acak produk belum diaudit
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                   {[5, 10, 20].map((num) => (
                     <button
                       key={num}
@@ -610,7 +610,7 @@ export default function StockAuditPage() {
                         key={p.id}
                         type="button"
                         disabled={isSelected || isLocked}
-                        className={`flex w-full items-center justify-between p-3 text-left transition ${
+                        className={`flex w-full items-center justify-between p-2.5 sm:p-3 text-left transition gap-2 ${
                           isSelected
                             ? 'bg-blue-50/50 opacity-60 cursor-not-allowed'
                             : isLocked
@@ -619,11 +619,11 @@ export default function StockAuditPage() {
                         }`}
                         onClick={() => addProduct(p)}
                       >
-                        <div className="min-w-0 flex-1 pr-3">
-                          <div className="font-semibold text-slate-900 text-sm truncate">{p.name}</div>
-                          <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-0.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-slate-900 text-xs sm:text-sm truncate">{p.name}</div>
+                          <div className="text-[11px] sm:text-xs text-slate-500 flex flex-wrap items-center gap-1.5 mt-0.5">
                             {p.barcode && (
-                              <span className="font-mono bg-slate-200/70 px-1 rounded text-slate-700">
+                              <span className="font-mono bg-slate-200/70 px-1 rounded text-slate-700 text-[10px] sm:text-xs">
                                 {p.barcode}
                               </span>
                             )}
@@ -634,28 +634,28 @@ export default function StockAuditPage() {
                                 p.last_audit_date ? 'text-slate-700' : 'text-amber-700 font-bold'
                               }`}
                             >
-                              Terakhir audit: {formatDateIndo(p.last_audit_date)}
+                              {p.last_audit_date ? `Audit: ${formatDateIndo(p.last_audit_date)}` : 'Belum pernah audit'}
                             </span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2.5 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
-                            <span className="text-xs text-slate-400 block">Stok Sistem</span>
-                            <span className="font-mono font-bold text-slate-800">{p.stock}</span>
+                            <span className="text-[10px] sm:text-xs text-slate-400 block leading-tight">Stok</span>
+                            <span className="font-mono font-bold text-slate-800 text-xs sm:text-sm">{p.stock}</span>
                           </div>
 
                           {isSelected ? (
-                            <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-800">
+                            <span className="px-2 py-1 rounded-lg text-[11px] sm:text-xs font-semibold bg-blue-100 text-blue-800">
                               Dipilih
                             </span>
                           ) : isLocked ? (
-                            <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
-                              <Lock size={12} /> Sedang Diaudit
+                            <span className="px-2 py-1 rounded-lg text-[10px] sm:text-xs font-semibold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1">
+                              <Lock size={11} /> Diaudit
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition">
-                              <Plus size={14} strokeWidth={2.5} /> Pilih
+                            <span className="inline-flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition">
+                              <Plus size={13} strokeWidth={2.5} /> Pilih
                             </span>
                           )}
                         </div>
@@ -669,7 +669,7 @@ export default function StockAuditPage() {
             </div>
 
             {/* Panel Kanan: Daftar Produk Terpilih (5 cols) */}
-            <div className="card flex flex-col min-h-[480px] lg:col-span-5 space-y-3">
+            <div className="card flex flex-col min-h-[480px] lg:col-span-5 space-y-3 min-w-0 overflow-hidden">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                 <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
                   Produk Terpilih ({selectedProducts.length})
@@ -740,7 +740,7 @@ export default function StockAuditPage() {
               {/* Submit Button */}
               <button
                 type="submit"
-                className="btn btn-primary w-full py-2.5 font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-600/20"
+                className="btn btn-primary w-full py-2.5 font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 text-sm"
                 disabled={startingAudit || selectedProducts.length === 0}
               >
                 <ArrowRight size={17} />

@@ -35,9 +35,9 @@ export default function PrintableAuditSheet({
     >
       <div className="printable-audit-modal-content">
         {/* Toolbar Kontrol Cetak (Tidak ikut tercetak) */}
-        <div className="no-print pb-4 mb-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-3 rounded-xl">
-          <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-700">
-            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+        <div className="no-print pb-3 mb-3 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-3 rounded-xl">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-xs font-medium text-slate-700">
+            <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
               <input
                 type="checkbox"
                 className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
@@ -47,7 +47,7 @@ export default function PrintableAuditSheet({
               <span>Tampilkan Stok Sistem</span>
             </label>
 
-            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+            <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
               <input
                 type="checkbox"
                 className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
@@ -58,10 +58,10 @@ export default function PrintableAuditSheet({
             </label>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 justify-end">
             <button
               type="button"
-              className="btn btn-primary btn-sm flex items-center gap-1.5 shadow-md shadow-blue-600/20 font-bold"
+              className="btn btn-primary btn-sm flex-1 sm:flex-none flex items-center justify-center gap-1.5 shadow-md shadow-blue-600/20 font-bold"
               onClick={handlePrint}
             >
               <Printer size={16} />
@@ -78,8 +78,14 @@ export default function PrintableAuditSheet({
           </div>
         </div>
 
-        {/* Dokumen Lembar Cetak */}
-        <div className="audit-print-document bg-white p-4 sm:p-6 rounded-lg border border-slate-200 text-slate-900 font-sans text-xs">
+        {/* Petunjuk scroll mobile jika di layar kecil */}
+        <div className="no-print sm:hidden text-[11px] text-slate-500 mb-2 flex items-center gap-1">
+          <span>💡 Geser tabel ke kanan/kiri untuk melihat pratinjau penuh</span>
+        </div>
+
+        {/* Container Dokumen Cetak (Scrollable di Mobile Screen, 100% saat Print) */}
+        <div className="w-full overflow-x-auto pb-2">
+          <div className="audit-print-document min-w-[620px] sm:min-w-0 bg-white p-4 sm:p-6 rounded-lg border border-slate-200 text-slate-900 font-sans text-xs">
           {/* Header Kop Lembar Audit */}
           <div className="border-b-2 border-slate-900 pb-3 mb-4 text-center print-avoid-break">
             <h1 className="text-lg sm:text-xl font-black uppercase tracking-wider text-slate-900 m-0">
@@ -230,8 +236,9 @@ export default function PrintableAuditSheet({
           </div>
         </div>
       </div>
+    </div>
 
-      <style dangerouslySetInnerHTML={{
+    <style dangerouslySetInnerHTML={{
         __html: `
         @page {
           size: A4 portrait;
@@ -266,10 +273,11 @@ export default function PrintableAuditSheet({
             display: none !important;
           }
 
-          /* 3. Reset Modal Containers */
+          /* 3. Reset Modal Containers & Scroll Wrappers */
           .fixed,
           [role="dialog"],
           .overflow-y-auto,
+          .overflow-x-auto,
           .overscroll-contain {
             position: static !important;
             inset: auto !important;
@@ -287,6 +295,7 @@ export default function PrintableAuditSheet({
 
           /* 4. Tampilkan Area Dokumen Cetak */
           .audit-print-document {
+            min-width: 0 !important;
             position: static !important;
             display: block !important;
             width: 100% !important;

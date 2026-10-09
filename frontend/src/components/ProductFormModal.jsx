@@ -48,7 +48,7 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
         setForm({
           name: p.name,
           barcode: p.barcode || '',
-          hpp: String(p.hpp),
+          hpp: p.hpp != null ? String(p.hpp) : '',
           stock: p.stock,
         });
         setPhotoUrl(p.photo_url || '');
@@ -155,7 +155,7 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
                 </div>
               )}
             </div>
-            {canSeeHpp && (
+            {(canSeeHpp || !isEdit) && (
               <div>
                 <label>HPP (modal per unit) *</label>
                 <input

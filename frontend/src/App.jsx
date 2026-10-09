@@ -72,11 +72,25 @@ export default function App() {
         <Route index element={<RoleHome />} />
         <Route path="orders" element={<OrdersPage />} />
         <Route path="products" element={<ProductsPage />} />
-        <Route path="stock-in" element={<StockInPage />} />
+        <Route
+          path="stock-in"
+          element={
+            <NonViewerRoute>
+              <StockInPage />
+            </NonViewerRoute>
+          }
+        />
         <Route path="stock-audit" element={<StockAuditPage />} />
         <Route path="stock-history" element={<StockInHistoryPage />} />
         <Route path="stores" element={<StoresPage />} />
-        <Route path="users" element={<UsersPage />} />
+        <Route
+          path="users"
+          element={
+            <OwnerRoute>
+              <UsersPage />
+            </OwnerRoute>
+          }
+        />
         <Route path="kurir-gudang" element={<WarehouseCourierPage />} />
         <Route
           path="expenses"

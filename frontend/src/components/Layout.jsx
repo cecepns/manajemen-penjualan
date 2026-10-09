@@ -21,18 +21,80 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useHeartbeat } from '../hooks/useHeartbeat.js';
 
 const links = [
-  { to: '/', label: 'Dashboard', end: true, Icon: LayoutDashboard, ownerOrViewerOnly: true },
-  { to: '/orders', label: 'Order', Icon: ShoppingCart },
-  { to: '/products', label: 'Produk', Icon: Package },
-  { to: '/stock-in', label: 'Tambah stok masuk', Icon: PackagePlus, hideForViewer: true },
-  { to: '/stock-audit', label: 'Stok audit', Icon: ClipboardList },
-  { to: '/stock-history', label: 'History stok', Icon: History },
-  { to: '/stores', label: 'Toko', Icon: Store },
-  { to: '/kurir-gudang', label: 'Kurir gudang', Icon: Truck },
-  { to: '/expenses', label: 'Keuangan', ownerOrAdminOrViewerOnly: true, Icon: Wallet },
-  { to: '/users', label: 'User', ownerOnly: true, Icon: Users },
-  { to: '/status-online', label: 'Status Online', Icon: Radio, isStatusOnline: true, hideForViewer: true },
-  { to: '/activity-log', label: 'Activity Log', ownerOnly: true, Icon: Activity },
+  {
+    to: '/',
+    label: 'Dashboard',
+    end: true,
+    Icon: LayoutDashboard,
+    canAccess: (auth) => auth.canViewDashboard,
+  },
+  {
+    to: '/orders',
+    label: 'Order',
+    Icon: ShoppingCart,
+    canAccess: (auth) => !auth.isCheckerPengiriman,
+  },
+  {
+    to: '/products',
+    label: 'Produk',
+    Icon: Package,
+    canAccess: (auth) => !auth.isCheckerPengiriman,
+  },
+  {
+    to: '/stock-in',
+    label: 'Tambah stok masuk',
+    Icon: PackagePlus,
+    canAccess: (auth) => !auth.isCheckerPengiriman && !auth.isViewer,
+  },
+  {
+    to: '/stock-audit',
+    label: 'Stok audit',
+    Icon: ClipboardList,
+    canAccess: (auth) => !auth.isCheckerPengiriman,
+  },
+  {
+    to: '/stock-history',
+    label: 'History stok',
+    Icon: History,
+    canAccess: (auth) => !auth.isCheckerPengiriman,
+  },
+  {
+    to: '/stores',
+    label: 'Toko',
+    Icon: Store,
+    canAccess: (auth) => !auth.isCheckerPengiriman,
+  },
+  {
+    to: '/kurir-gudang',
+    label: 'Kurir gudang',
+    Icon: Truck,
+    canAccess: () => true,
+  },
+  {
+    to: '/expenses',
+    label: 'Keuangan',
+    Icon: Wallet,
+    canAccess: (auth) => auth.isOwner || auth.isAdmin || auth.isViewer,
+  },
+  {
+    to: '/users',
+    label: 'User',
+    Icon: Users,
+    canAccess: (auth) => auth.isOwner,
+  },
+  {
+    to: '/status-online',
+    label: 'Status Online',
+    Icon: Radio,
+    isStatusOnline: true,
+    canAccess: (auth) => !auth.isViewer,
+  },
+  {
+    to: '/activity-log',
+    label: 'Activity Log',
+    Icon: Activity,
+    canAccess: (auth) => auth.isOwner,
+  },
 ];
 
 const navLinkDesktop = ({ isActive }) =>
@@ -43,24 +105,10 @@ const navLinkDesktop = ({ isActive }) =>
       : 'text-slate-400 hover:bg-white/5 hover:text-slate-100',
   ].join(' ');
 
-function SidebarContent({ user, isOwner, onLinkClick, headerLeading, onLogout }) {
-  const r = user?.role;
-  const isOwnerOrAdmin = isOwner || r === 'admin';
-  const isViewer = r === 'viewer';
-  const isOwnerOrViewer = isOwner || isViewer;
-  const isOwnerOrAdminOrViewer = isOwner || r === 'admin' || isViewer;
-
-  const visible =
-    r === 'checker_pengiriman'
-      ? links.filter((l) => l.to === '/kurir-gudang' || l.to === '/status-online')
-      : links.filter((l) => {
-          if (l.ownerOnly) return isOwner;
-          if (l.ownerOrViewerOnly) return isOwnerOrViewer;
-          if (l.ownerOrAdminOnly) return isOwnerOrAdmin;
-          if (l.ownerOrAdminOrViewerOnly) return isOwnerOrAdminOrViewer;
-          if (l.hideForViewer && isViewer) return false;
-          return true;
-        });
+function SidebarContent({ onLinkClick, headerLeading, onLogout }) {
+  const auth = useAuth();
+  const { user } = auth;
+  const visible = links.filter((l) => (l.canAccess ? l.canAccess(auth) : true));
 
   return (
     <>
@@ -124,7 +172,11 @@ export default function Layout() {
 
   useEffect(() => {
     if (user?.role !== 'checker_pengiriman') return;
-    if (location.pathname === '/kurir-gudang' || location.pathname.startsWith('/kurir-gudang/'))
+    if (
+      location.pathname === '/kurir-gudang' ||
+      location.pathname.startsWith('/kurir-gudang/') ||
+      location.pathname === '/status-online'
+    )
       return;
     nav('/kurir-gudang', { replace: true });
   }, [user?.role, location.pathname, nav]);
@@ -200,8 +252,6 @@ export default function Layout() {
           onClick={(e) => e.stopPropagation()}
         >
           <SidebarContent
-            user={user}
-            isOwner={isOwner}
             onLinkClick={() => setMobileOpen(false)}
             onLogout={handleLogout}
             headerLeading={
@@ -219,7 +269,7 @@ export default function Layout() {
       </div>
 
       <nav className="fixed left-0 top-0 z-40 hidden h-full w-[228px] flex-col gap-1 border-r border-slate-700/80 bg-gradient-to-b from-slate-800 via-slate-800 to-slate-950 p-3 pb-5 shadow-[4px_0_24px_rgba(15,23,42,0.12)] ring-1 ring-inset ring-white/[0.06] md:flex">
-        <SidebarContent user={user} isOwner={isOwner} onLogout={handleLogout} />
+        <SidebarContent onLogout={handleLogout} />
       </nav>
 
       <main className="mx-auto w-full max-w-8xl overflow-x-hidden px-3 pb-6 pt-[calc(3.5rem+0.625rem)] md:pb-3.5 md:pl-[calc(228px+0.85rem)] md:pr-4 md:pt-3">

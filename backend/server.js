@@ -74,9 +74,9 @@ function productPhotoUploadMaybe(req, res, next) {
   });
 }
 
-function paginate(page, limit = 10) {
+function paginate(page, limit = 10, maxLimit = 100) {
   const p = Math.max(1, parseInt(String(page), 10) || 1);
-  const l = Math.min(100, Math.max(1, parseInt(String(limit), 10) || 10));
+  const l = Math.min(maxLimit, Math.max(1, parseInt(String(limit), 10) || 10));
   return { page: p, limit: l, offset: (p - 1) * l };
 }
 
@@ -389,10 +389,34 @@ function staffExceptChecker(req, res, next) {
   next();
 }
 
+function canSeeHpp(role) {
+  return role === 'owner' || role === 'admin' || role === 'viewer';
+}
+
 function ownerOrAdmin(req, res, next) {
   const r = req.user?.role;
   if (r !== 'owner' && r !== 'admin')
     return res.status(403).json({ message: 'Hanya owner atau admin' });
+  next();
+}
+
+function ownerOrViewer(req, res, next) {
+  const r = req.user?.role;
+  if (r !== 'owner' && r !== 'viewer')
+    return res.status(403).json({ message: 'Akses dashboard hanya untuk owner dan viewer' });
+  next();
+}
+
+function ownerOrAdminOrViewer(req, res, next) {
+  const r = req.user?.role;
+  if (r !== 'owner' && r !== 'admin' && r !== 'viewer')
+    return res.status(403).json({ message: 'Hanya owner, admin, atau viewer' });
+  next();
+}
+
+function notViewer(req, res, next) {
+  if (req.user?.role === 'viewer')
+    return res.status(403).json({ message: 'Role Viewer hanya memiliki akses baca (read-only)' });
   next();
 }
 
@@ -518,6 +542,9 @@ app.post('/api/user-status/heartbeat', authRequired, async (req, res) => {
 });
 
 app.get('/api/user-status/online-users', authRequired, async (req, res) => {
+  if (req.user?.role === 'viewer') {
+    return res.status(403).json({ message: 'Akses tidak tersedia untuk role viewer' });
+  }
   try {
     const { search = '', role = '', status = '', page = 1, limit = 10 } = req.query;
     const { page: p, limit: l, offset } = paginate(page, limit);
@@ -920,7 +947,10 @@ app.get('/api/products', authRequired, staffExceptChecker, async (req, res) => {
        ${orderSql} LIMIT ? OFFSET ?`,
       [...params, l, offset]
     );
-    res.json({ data: rows, page: p, limit: l, total });
+    const visibleRows = canSeeHpp(req.user?.role)
+      ? rows
+      : rows.map(r => ({ ...r, hpp: null }));
+    res.json({ data: visibleRows, page: p, limit: l, total });
   } catch (e) {
     console.error(e);
     res.status(500).json({ message: 'Gagal memuat produk' });
@@ -935,7 +965,11 @@ app.get('/api/products/by-barcode', authRequired, staffExceptChecker, async (req
     'SELECT p.* FROM products p WHERE p.barcode = ? LIMIT 1',
     [String(barcode).trim()]
   );
-  res.json(rows[0] || null);
+  const prod = rows[0] || null;
+  if (prod && !canSeeHpp(req.user?.role)) {
+    prod.hpp = null;
+  }
+  res.json(prod);
 });
 
 app.get('/api/products/:id', authRequired, staffExceptChecker, async (req, res) => {
@@ -943,10 +977,14 @@ app.get('/api/products/:id', authRequired, staffExceptChecker, async (req, res) 
     req.params.id,
   ]);
   if (!rows[0]) return res.status(404).json({ message: 'Tidak ada' });
-  res.json(rows[0]);
+  const prod = rows[0];
+  if (!canSeeHpp(req.user?.role)) {
+    prod.hpp = null;
+  }
+  res.json(prod);
 });
 
-app.post('/api/products/:id/stock-in', authRequired, staffExceptChecker, async (req, res) => {
+app.post('/api/products/:id/stock-in', authRequired, staffExceptChecker, notViewer, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { qty, notes } = req.body || {};
@@ -1014,7 +1052,7 @@ app.post('/api/products/:id/stock-in', authRequired, staffExceptChecker, async (
   }
 });
 
-app.post('/api/stock-audit', authRequired, staffExceptChecker, async (req, res) => {
+app.post('/api/stock-audit', authRequired, staffExceptChecker, notViewer, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { items, notes, audit_date } = req.body || {};
@@ -1348,7 +1386,7 @@ app.get('/api/stock-audit-sessions/:id', authRequired, staffExceptChecker, async
   }
 });
 
-app.post('/api/stock-audit-sessions', authRequired, staffExceptChecker, async (req, res) => {
+app.post('/api/stock-audit-sessions', authRequired, staffExceptChecker, notViewer, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { product_ids, audit_date, notes } = req.body || {};
@@ -1439,7 +1477,7 @@ app.post('/api/stock-audit-sessions', authRequired, staffExceptChecker, async (r
   }
 });
 
-app.put('/api/stock-audit-sessions/:id/physical-counts', authRequired, staffExceptChecker, async (req, res) => {
+app.put('/api/stock-audit-sessions/:id/physical-counts', authRequired, staffExceptChecker, notViewer, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { items, notes } = req.body || {};
@@ -1677,7 +1715,7 @@ app.post('/api/stock-audit-sessions/:id/reject', authRequired, ownerOnly, async 
   }
 });
 
-app.delete('/api/stock-audit-sessions/:id', authRequired, staffExceptChecker, async (req, res) => {
+app.delete('/api/stock-audit-sessions/:id', authRequired, staffExceptChecker, notViewer, async (req, res) => {
   try {
     const [sessRows] = await pool.query(
       `SELECT * FROM stock_audit_sessions WHERE id = ? LIMIT 1`,
@@ -1865,7 +1903,7 @@ app.get('/api/stock-in-history', authRequired, staffExceptChecker, async (req, r
   }
 });
 
-app.post('/api/products', authRequired, staffExceptChecker, productPhotoUploadMaybe, async (req, res) => {
+app.post('/api/products', authRequired, staffExceptChecker, notViewer, productPhotoUploadMaybe, async (req, res) => {
   try {
     const { name, barcode, hpp, stock } = req.body || {};
     const photoPath = req.file ? `/uploads/${req.file.filename}` : null;
@@ -1909,7 +1947,7 @@ app.post('/api/products', authRequired, staffExceptChecker, productPhotoUploadMa
   }
 });
 
-app.put('/api/products/:id', authRequired, staffExceptChecker, productPhotoUploadMaybe, async (req, res) => {
+app.put('/api/products/:id', authRequired, staffExceptChecker, notViewer, productPhotoUploadMaybe, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { name, barcode, hpp, stock, stock_in, stock_in_notes, remove_photo } = req.body || {};
@@ -2206,7 +2244,7 @@ function assertOrderGroupUpdateAllowed(role, sortedExisting, body) {
 /* ——— Orders ——— */
 app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res) => {
   try {
-    const { store_id, date_from, date_to, payout, search = '' } = req.query;
+    const { store_id, date_from, date_to, payout, status, search = '' } = req.query;
     let where =
       '(o.order_no LIKE ? OR o.product_name LIKE ? OR IFNULL(o.resi,"") LIKE ? OR IFNULL(pr.barcode,"") LIKE ?)';
     const q = `%${String(search).trim()}%`;
@@ -2222,6 +2260,10 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
     if (date_to) {
       where += ' AND o.order_date <= ?';
       params.push(date_to);
+    }
+    if (status && ['diproses', 'dikirim', 'selesai', 'retur'].includes(status)) {
+      where += ' AND o.status = ?';
+      params.push(status);
     }
     if (payout === 'belum') {
       where += ` AND NOT EXISTS (
@@ -2244,6 +2286,8 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
        WHERE ${where} ORDER BY o.order_date DESC, o.order_no ASC, o.id ASC`,
       params
     );
+
+    const allowHpp = canSeeHpp(req.user?.role);
 
     // Group rows by order key to calculate total order modal for multi-item orders
     const orderTotals = new Map();
@@ -2276,11 +2320,13 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
         if (isSudahCair) {
           nominalCair = groupNc;
         }
-        if (o.status === 'retur') {
-          const nc = isSudahCair ? groupNc : 0;
-          laba = Math.min(0, nc - totalOrderModal);
-        } else if (isSudahCair) {
-          laba = groupNc - totalOrderModal;
+        if (allowHpp) {
+          if (o.status === 'retur') {
+            const nc = isSudahCair ? groupNc : 0;
+            laba = Math.min(0, nc - totalOrderModal);
+          } else if (isSudahCair) {
+            laba = groupNc - totalOrderModal;
+          }
         }
       }
 
@@ -2291,8 +2337,8 @@ app.get('/api/orders/export', authRequired, staffExceptChecker, async (req, res)
         Variasi: o.variasi,
         Qty: o.qty,
         HargaJual: o.selling_price,
-        HPP: o.hpp_snapshot,
-        TotalModal: modalThisRow,
+        HPP: allowHpp ? o.hpp_snapshot : '',
+        TotalModal: allowHpp ? modalThisRow : '',
         Toko: o.store_name,
         Tanggal: orderDateKeyDb(o.order_date),
         Status: o.status,
@@ -2427,6 +2473,7 @@ app.get('/api/orders/:id', authRequired, staffExceptChecker, async (req, res) =>
     );
     const first = siblings[0];
     const groupNominalRow = siblings.find((r) => r.nominal_cair != null) || null;
+    const allowHpp = canSeeHpp(req.user?.role);
     const items = siblings.map((r) => ({
       id: r.id,
       product_name: r.product_name,
@@ -2434,7 +2481,7 @@ app.get('/api/orders/:id', authRequired, staffExceptChecker, async (req, res) =>
       qty: r.qty,
       selling_price: r.selling_price,
       product_id: r.product_id,
-      hpp_snapshot: Number(r.hpp_snapshot) || 0,
+      hpp_snapshot: allowHpp ? (Number(r.hpp_snapshot) || 0) : null,
     }));
     res.json({
       group_line_ids: siblings.map((r) => r.id),
@@ -2499,9 +2546,26 @@ app.get('/api/orders', authRequired, staffExceptChecker, async (req, res) => {
 
     const groupBy = 'o.order_no, o.store_id, DATE(o.order_date)';
 
-    const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS c FROM (
-        SELECT 1 AS x
+    const allowHpp = canSeeHpp(req.user?.role);
+
+    const [aggRows] = await pool.query(
+      `SELECT 
+         COUNT(*) AS c,
+         COALESCE(SUM(grp.total_modal), 0) AS total_modal,
+         COALESCE(SUM(grp.nominal_cair_value), 0) AS total_nominal_cair,
+         COALESCE(SUM(grp.laba), 0) AS total_laba
+       FROM (
+        SELECT 
+          SUM(o.qty * o.hpp_snapshot) AS total_modal,
+          MAX(o.nominal_cair) AS nominal_cair_value,
+          CASE
+            WHEN SUM(CASE WHEN o.nominal_cair IS NOT NULL THEN 1 ELSE 0 END) = 0
+              AND SUM(CASE WHEN o.status = 'retur' THEN 1 ELSE 0 END) = 0
+              THEN NULL
+            WHEN SUM(CASE WHEN o.status = 'retur' THEN 1 ELSE 0 END) > 0
+              THEN LEAST(0, IFNULL(MAX(o.nominal_cair), 0) - SUM(o.qty * o.hpp_snapshot))
+            ELSE MAX(o.nominal_cair) - SUM(o.qty * o.hpp_snapshot)
+          END AS laba
         FROM orders o
         JOIN stores s ON s.id = o.store_id
         LEFT JOIN products pr ON pr.id = o.product_id
@@ -2511,7 +2575,13 @@ app.get('/api/orders', authRequired, staffExceptChecker, async (req, res) => {
       ) grp`,
       params
     );
-    const total = countRows[0].c;
+    const total = Number(aggRows[0]?.c) || 0;
+    const summary = {
+      total_orders: total,
+      total_modal: allowHpp ? (Number(aggRows[0]?.total_modal) || 0) : null,
+      total_nominal_cair: Number(aggRows[0]?.total_nominal_cair) || 0,
+      total_laba: allowHpp ? (Number(aggRows[0]?.total_laba) || 0) : null,
+    };
 
     const [rows] = await pool.query(
       `SELECT
@@ -2574,23 +2644,23 @@ app.get('/api/orders', authRequired, staffExceptChecker, async (req, res) => {
         order_date: orderDateKeyDb(row.order_date),
         item_count: Number(row.item_count),
         qty_sum: Number(row.qty_sum),
-        total_modal: Number(row.total_modal),
+        total_modal: allowHpp ? Number(row.total_modal) : null,
         products_label: row.products_label || '',
         status: row.status,
         payout_status_label: row.payout_status_label,
         nominal_cair_value:
           row.nominal_cair_value != null ? Number(row.nominal_cair_value) : null,
-        laba: row.laba != null ? Number(row.laba) : null,
+        laba: allowHpp && row.laba != null ? Number(row.laba) : null,
       };
     });
-    res.json({ data, page: p, limit: l, total });
+    res.json({ data, page: p, limit: l, total, summary });
   } catch (e) {
     console.error(e);
     res.status(500).json({ message: 'Gagal memuat order' });
   }
 });
 
-app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, async (req, res) => {
+app.post('/api/orders', authRequired, staffExceptChecker, notViewer, orderUploadMaybe, async (req, res) => {
   const body = req.body || {};
   let items = body.items;
   if (typeof items === 'string') {
@@ -2875,7 +2945,7 @@ app.post('/api/orders', authRequired, staffExceptChecker, orderUploadMaybe, asyn
 });
 
 /** Ganti seluruh baris DB satu pesanan (multi-item): hapus line_ids lalu insert ulang seperti order baru. */
-app.put('/api/orders/group', authRequired, staffExceptChecker, async (req, res) => {
+app.put('/api/orders/group', authRequired, staffExceptChecker, notViewer, async (req, res) => {
   const body = req.body || {};
   let lineIds = Array.isArray(body.line_ids)
     ? body.line_ids.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)
@@ -3140,7 +3210,7 @@ app.put('/api/orders/group', authRequired, staffExceptChecker, async (req, res) 
   }
 });
 
-app.put('/api/orders/:id', authRequired, staffExceptChecker, async (req, res) => {
+app.put('/api/orders/:id', authRequired, staffExceptChecker, notViewer, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const prev = await getOrderById(conn, req.params.id);
@@ -3450,7 +3520,7 @@ app.delete('/api/orders/:id', authRequired, staffExceptChecker, ownerOnly, async
 });
 
 /* ——— Dashboard ——— */
-app.get('/api/dashboard', authRequired, staffExceptChecker, async (req, res) => {
+app.get('/api/dashboard', authRequired, staffExceptChecker, ownerOrViewer, async (req, res) => {
   try {
     const { store_id, date_from, date_to } = req.query;
     let oWhere = '1=1';
@@ -3717,7 +3787,7 @@ app.put('/api/users/:id', authRequired, staffExceptChecker, ownerOnly, async (re
   if (!name?.trim() || !email?.trim())
     return res.status(400).json({ message: 'Nama dan email wajib' });
 
-  const allowed = new Set(['owner', 'admin', 'karyawan', 'checker_pengiriman']);
+  const allowed = new Set(['owner', 'admin', 'karyawan', 'checker_pengiriman', 'viewer']);
   let r = String(role || 'karyawan').trim();
   if (!allowed.has(r)) r = 'karyawan';
 
@@ -3790,7 +3860,7 @@ app.post('/api/users', authRequired, staffExceptChecker, ownerOnly, async (req, 
   const { name, email, password, role } = req.body || {};
   if (!name?.trim() || !email?.trim() || !password)
     return res.status(400).json({ message: 'Nama, email, password wajib' });
-  const allowed = new Set(['owner', 'admin', 'karyawan', 'checker_pengiriman']);
+  const allowed = new Set(['owner', 'admin', 'karyawan', 'checker_pengiriman', 'viewer']);
   let r = String(role || 'karyawan').trim();
   if (!allowed.has(r)) r = 'karyawan';
   const hash = await bcrypt.hash(String(password), 10);
@@ -3848,10 +3918,11 @@ app.delete('/api/users/:id', authRequired, staffExceptChecker, ownerOnly, async 
 });
 
 /* ——— Expenses (Keuangan) ——— */
-app.get('/api/expenses', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+app.get('/api/expenses', authRequired, staffExceptChecker, ownerOrAdminOrViewer, async (req, res) => {
   try {
     const { page = 1, limit = 10, category, store_id, date_from, date_to, search } = req.query;
-    const { page: p, limit: l, offset } = paginate(page, limit);
+    const maxL = req.query.export === 'true' || Number(limit) > 100 ? 100000 : 100;
+    const { page: p, limit: l, offset } = paginate(page, limit, maxL);
     let where = '1=1';
     const params = [];
     if (category) {
@@ -3879,6 +3950,20 @@ app.get('/api/expenses', authRequired, staffExceptChecker, ownerOrAdmin, async (
       params
     );
     const total = countRows[0].c;
+
+    const [sumRows] = await pool.query(
+      `SELECT 
+         COALESCE(SUM(amount), 0) AS total,
+         COALESCE(SUM(CASE WHEN category = 'operasional' THEN amount ELSE 0 END), 0) AS ops,
+         COALESCE(SUM(CASE WHEN category = 'iklan' THEN amount ELSE 0 END), 0) AS ads,
+         COALESCE(SUM(CASE WHEN category = 'belanja_supplier' THEN amount ELSE 0 END), 0) AS supplier,
+         COALESCE(SUM(CASE WHEN category = 'refund_manual' THEN amount ELSE 0 END), 0) AS refund,
+         COALESCE(SUM(CASE WHEN category NOT IN ('operasional', 'iklan', 'belanja_supplier', 'refund_manual') THEN amount ELSE 0 END), 0) AS lain
+       FROM expenses e
+       WHERE ${where}`,
+      params
+    );
+
     const [rows] = await pool.query(
       `SELECT e.*, s.name AS store_name, u.name AS user_name 
        FROM expenses e 
@@ -3889,7 +3974,7 @@ app.get('/api/expenses', authRequired, staffExceptChecker, ownerOrAdmin, async (
        LIMIT ? OFFSET ?`,
       [...params, l, offset]
     );
-    res.json({ data: rows, page: p, limit: l, total });
+    res.json({ data: rows, page: p, limit: l, total, summary: sumRows[0] });
   } catch (e) {
     console.error(e);
     res.status(500).json({ message: 'Gagal memuat data pengeluaran' });
@@ -3901,6 +3986,9 @@ app.post('/api/expenses', authRequired, staffExceptChecker, ownerOrAdmin, async 
     const { category, amount, expense_date, store_id, notes } = req.body || {};
     if (!category || !amount || !expense_date) {
       return res.status(400).json({ message: 'Kategori, jumlah, dan tanggal wajib diisi' });
+    }
+    if (category === 'iklan' && !store_id) {
+      return res.status(400).json({ message: 'Toko terkait wajib dipilih untuk kategori iklan' });
     }
     const [r] = await pool.query(
       `INSERT INTO expenses (category, amount, expense_date, store_id, notes, created_by) 
@@ -3944,6 +4032,9 @@ app.put('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, asy
     const { category, amount, expense_date, store_id, notes } = req.body || {};
     if (!category || !amount || !expense_date) {
       return res.status(400).json({ message: 'Kategori, jumlah, dan tanggal wajib diisi' });
+    }
+    if (category === 'iklan' && !store_id) {
+      return res.status(400).json({ message: 'Toko terkait wajib dipilih untuk kategori iklan' });
     }
 
     const [existing] = await pool.query('SELECT * FROM expenses WHERE id = ? LIMIT 1', [req.params.id]);
@@ -4015,10 +4106,11 @@ app.delete('/api/expenses/:id', authRequired, staffExceptChecker, ownerOrAdmin, 
 });
 
 /* ——— Incomes (Pemasukan) ——— */
-app.get('/api/incomes', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+app.get('/api/incomes', authRequired, staffExceptChecker, ownerOrAdminOrViewer, async (req, res) => {
   try {
     const { page = 1, limit = 10, category, source, date_from, date_to, search } = req.query;
-    const { page: p, limit: l, offset } = paginate(page, limit);
+    const maxL = req.query.export === 'true' || Number(limit) > 100 ? 100000 : 100;
+    const { page: p, limit: l, offset } = paginate(page, limit, maxL);
     let where = '1=1';
     const params = [];
     if (category) {
@@ -4181,7 +4273,7 @@ app.delete('/api/incomes/:id', authRequired, staffExceptChecker, ownerOrAdmin, a
 });
 
 /* ——— Finance Info & Balance ——— */
-app.get('/api/finances/balance', authRequired, staffExceptChecker, ownerOrAdmin, async (req, res) => {
+app.get('/api/finances/balance', authRequired, staffExceptChecker, ownerOrAdminOrViewer, async (req, res) => {
   try {
     const [[{ total_income }]] = await pool.query(`SELECT COALESCE(SUM(amount), 0) AS total_income FROM incomes`);
     const [[{ total_expense_deductible }]] = await pool.query(`SELECT COALESCE(SUM(amount), 0) AS total_expense_deductible FROM expenses WHERE category != 'iklan'`);

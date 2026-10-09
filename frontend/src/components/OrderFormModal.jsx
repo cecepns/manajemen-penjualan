@@ -90,7 +90,7 @@ function renderProductOptionLabel(option) {
 
 export default function OrderFormModal({ open, onClose, orderId, onSaved }) {
   const isEdit = orderId != null;
-  const { isOwner, isAdmin, isKaryawan, isOwnerOrAdmin } = useAuth();
+  const { isOwner, isAdmin, isKaryawan, isOwnerOrAdmin, canSeeHpp } = useAuth();
   const canEditHpp = isOwnerOrAdmin;
   const [stores, setStores] = useState([]);
   const [form, setForm] = useState(emptyHeader);
@@ -571,32 +571,34 @@ export default function OrderFormModal({ open, onClose, orderId, onSaved }) {
                           disabled={lineLock || fullFormLock}
                         />
                       </div>
-                      <div>
-                        <label>HPP (modal per unit)</label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={line.hpp_snapshot}
-                          onChange={(e) => setLine(idx, { hpp_snapshot: e.target.value })}
-                          disabled={
-                            lineLock ||
-                            fullFormLock ||
-                            !canEditHpp ||
-                            !!line.product_id
-                          }
-                          readOnly={!canEditHpp || !!line.product_id}
-                        />
-                        {!canEditHpp && (
-                          <p className="muted mt-1 text-xs">
-                            HPP hanya dapat diubah oleh admin atau owner.
-                          </p>
-                        )}
-                        {canEditHpp && line.product_id && (
-                          <p className="muted mt-1 text-xs">
-                            Mengikuti HPP produk terhubung.
-                          </p>
-                        )}
-                      </div>
+                      {canSeeHpp && (
+                        <div>
+                          <label>HPP (modal per unit)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={line.hpp_snapshot}
+                            onChange={(e) => setLine(idx, { hpp_snapshot: e.target.value })}
+                            disabled={
+                              lineLock ||
+                              fullFormLock ||
+                              !canEditHpp ||
+                              !!line.product_id
+                            }
+                            readOnly={!canEditHpp || !!line.product_id}
+                          />
+                          {!canEditHpp && (
+                            <p className="muted mt-1 text-xs">
+                              HPP hanya dapat diubah oleh admin atau owner.
+                            </p>
+                          )}
+                          {canEditHpp && line.product_id && (
+                            <p className="muted mt-1 text-xs">
+                              Mengikuti HPP produk terhubung.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

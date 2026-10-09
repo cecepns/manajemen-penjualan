@@ -27,7 +27,7 @@ function formatMoney(n) {
 }
 
 export default function AuditDetailModal({ open, onClose, sessionId, onRefresh }) {
-  const { isOwner } = useAuth();
+  const { isOwner, isViewer, canSeeHpp } = useAuth();
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState(null);
   const [items, setItems] = useState([]);
@@ -226,7 +226,7 @@ export default function AuditDetailModal({ open, onClose, sessionId, onRefresh }
     }
   }
 
-  const isEditable = session?.status === 'in_progress' || session?.status === 'pending_approval';
+  const isEditable = !isViewer && (session?.status === 'in_progress' || session?.status === 'pending_approval');
   const isApproved = session?.status === 'approved';
   const isRejected = session?.status === 'rejected';
   const isCancelled = session?.status === 'cancelled';
@@ -332,7 +332,7 @@ export default function AuditDetailModal({ open, onClose, sessionId, onRefresh }
           )}
 
           {/* Ringkasan Perhitungan Selisih */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className={`grid grid-cols-2 ${canSeeHpp ? 'sm:grid-cols-4' : 'sm:grid-cols-3'} gap-3`}>
             <div className="card p-3 text-center bg-slate-50/70 border border-slate-200">
               <span className="text-xs text-slate-500">Total Produk</span>
               <div className="text-lg font-bold text-slate-800">{summary.totalItems} item</div>
@@ -360,21 +360,23 @@ export default function AuditDetailModal({ open, onClose, sessionId, onRefresh }
               </div>
               <span className="text-[10px] text-slate-400">akumulasi delta</span>
             </div>
-            <div className="card p-3 text-center bg-slate-50/70 border border-slate-200">
-              <span className="text-xs text-slate-500">Estimasi Nilai HPP Selisih</span>
-              <div
-                className={`text-sm font-bold mt-1 ${
-                  summary.totalDeltaHpp > 0
-                    ? 'text-emerald-600'
-                    : summary.totalDeltaHpp < 0
-                    ? 'text-red-600'
-                    : 'text-slate-800'
-                }`}
-              >
-                {formatMoney(summary.totalDeltaHpp)}
+            {canSeeHpp && (
+              <div className="card p-3 text-center bg-slate-50/70 border border-slate-200">
+                <span className="text-xs text-slate-500">Estimasi Nilai HPP Selisih</span>
+                <div
+                  className={`text-sm font-bold mt-1 ${
+                    summary.totalDeltaHpp > 0
+                      ? 'text-emerald-600'
+                      : summary.totalDeltaHpp < 0
+                      ? 'text-red-600'
+                      : 'text-slate-800'
+                  }`}
+                >
+                  {formatMoney(summary.totalDeltaHpp)}
+                </div>
+                <span className="text-[10px] text-slate-400">dampak keuangan</span>
               </div>
-              <span className="text-[10px] text-slate-400">dampak keuangan</span>
-            </div>
+            )}
           </div>
 
           {/* Form / Tabel Input Hitungan Fisik */}
@@ -416,8 +418,9 @@ export default function AuditDetailModal({ open, onClose, sessionId, onRefresh }
                         <td className="py-2.5 px-3">
                           <div className="font-medium text-slate-900">{it.product_name}</div>
                           <div className="text-xs text-slate-500">
-                            {it.product_barcode ? `Barcode: ${it.product_barcode} • ` : ''}
-                            HPP: {formatMoney(it.product_hpp)}
+                            {it.product_barcode ? `Barcode: ${it.product_barcode}` : ''}
+                            {it.product_barcode && canSeeHpp ? ' • ' : ''}
+                            {canSeeHpp ? `HPP: ${formatMoney(it.product_hpp)}` : ''}
                           </div>
                         </td>
                         <td className="py-2.5 px-3 text-center font-semibold text-slate-700">

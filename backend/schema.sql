@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(191) NOT NULL,
   email VARCHAR(191) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
-  role ENUM('owner', 'admin', 'karyawan', 'checker_pengiriman') NOT NULL DEFAULT 'karyawan',
+  role ENUM('owner', 'admin', 'karyawan', 'checker_pengiriman', 'viewer') NOT NULL DEFAULT 'karyawan',
   last_active_at DATETIME DEFAULT NULL,
   last_login_at DATETIME DEFAULT NULL,
   last_logout_at DATETIME DEFAULT NULL,

@@ -59,7 +59,7 @@ function formatGroupNominalCair(o) {
 }
 
 export default function OrdersPage() {
-  const { isOwner, isKaryawan } = useAuth();
+  const { isOwner, isKaryawan, isViewer, canSeeHpp } = useAuth();
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 1000);
   const [page, setPage] = useState(1);
@@ -71,6 +71,7 @@ export default function OrdersPage() {
   const [stores, setStores] = useState([]);
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState(null);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [orderEditingId, setOrderEditingId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -104,6 +105,7 @@ export default function OrdersPage() {
       const { data } = await api.get(`/api/orders?${params}`);
       setRows(data.data);
       setTotal(data.total);
+      setSummary(data.summary || null);
     },
     [page, search, storeId, dateFrom, dateTo, payout, status]
   );
@@ -163,6 +165,7 @@ export default function OrdersPage() {
     if (dateFrom) params.set('date_from', format(dateFrom, 'yyyy-MM-dd'));
     if (dateTo) params.set('date_to', format(dateTo, 'yyyy-MM-dd'));
     if (payout) params.set('payout', payout);
+    if (status) params.set('status', status);
     try {
       const { data } = await api.get(`/api/orders/export?${params}`);
       const rows = Array.isArray(data?.data) ? data.data : [];
@@ -204,10 +207,12 @@ export default function OrdersPage() {
           <ShoppingCart size={28} strokeWidth={2} className="icon-title" aria-hidden />
           Order
         </h1>
-        <button type="button" className="btn btn-primary" onClick={openNewOrder}>
-          <Plus size={18} strokeWidth={2} aria-hidden />
-          Order baru
-        </button>
+        {!isViewer && (
+          <button type="button" className="btn btn-primary" onClick={openNewOrder}>
+            <Plus size={18} strokeWidth={2} aria-hidden />
+            Order baru
+          </button>
+        )}
         <button type="button" className="btn btn-secondary" onClick={handleExport}>
           <FileDown size={18} strokeWidth={2} aria-hidden />
           Export Excel
@@ -302,6 +307,39 @@ export default function OrdersPage() {
         </div>
       </div>
 
+      {summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+            <span className="text-xs font-medium text-slate-500">Total Pesanan</span>
+            <div className="text-lg font-bold text-slate-900 mt-0.5 tabular-nums">
+              {Number(summary.total_orders || 0).toLocaleString('id-ID')}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+            <span className="text-xs font-medium text-slate-500">Total Pencairan</span>
+            <div className="text-lg font-bold text-slate-900 mt-0.5 tabular-nums">
+              {formatMoney(summary.total_nominal_cair)}
+            </div>
+          </div>
+          {canSeeHpp && (
+            <>
+              <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
+                <span className="text-xs font-medium text-slate-500">Total Modal</span>
+                <div className="text-lg font-bold text-slate-700 mt-0.5 tabular-nums">
+                  {formatMoney(summary.total_modal)}
+                </div>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5 shadow-sm">
+                <span className="text-xs font-medium text-emerald-700">Total Laba</span>
+                <div className="text-lg font-bold text-emerald-800 mt-0.5 tabular-nums">
+                  {formatMoney(summary.total_laba)}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="card table-wrap">
         <table className="table-app">
           <thead>
@@ -312,8 +350,8 @@ export default function OrdersPage() {
               <th className="text-center align-middle">Tgl</th>
               <th className="text-center align-middle">Status order</th>
               <th>Pencairan</th>
-              <th>Total modal</th>
-              <th>Laba</th>
+              {canSeeHpp && <th>Total modal</th>}
+              {canSeeHpp && <th>Laba</th>}
               <th className="min-w-[12rem]">Aksi</th>
             </tr>
           </thead>
@@ -341,8 +379,12 @@ export default function OrdersPage() {
                   </span>
                   <div className="tabular-nums">{formatGroupNominalCair(o)}</div>
                 </td>
-                <td className="tabular-nums text-slate-700">{formatMoney(o.total_modal)}</td>
-                <td className="tabular-nums font-medium text-slate-900">{formatMoney(o.laba)}</td>
+                {canSeeHpp && (
+                  <td className="tabular-nums text-slate-700">{formatMoney(o.total_modal)}</td>
+                )}
+                {canSeeHpp && (
+                  <td className="tabular-nums font-medium text-slate-900">{formatMoney(o.laba)}</td>
+                )}
                 <td>
                   <div className="flex flex-wrap gap-1.5">
                     <button
@@ -353,15 +395,15 @@ export default function OrdersPage() {
                       <Eye size={14} strokeWidth={2} aria-hidden />
                       Lihat detail
                     </button>
-                    {!shippedReadonlyKaryawan(o.status) && (
-                    <button
-                      type="button"
-                      className="btn btn-primary min-h-9 px-2.5 text-xs"
-                      onClick={() => openEditOrder(o.id)}
-                    >
-                      <Pencil size={14} strokeWidth={2} aria-hidden />
-                      Edit
-                    </button>
+                    {!isViewer && !shippedReadonlyKaryawan(o.status) && (
+                      <button
+                        type="button"
+                        className="btn btn-primary min-h-9 px-2.5 text-xs"
+                        onClick={() => openEditOrder(o.id)}
+                      >
+                        <Pencil size={14} strokeWidth={2} aria-hidden />
+                        Edit
+                      </button>
                     )}
                     {isOwner && (
                       <button
@@ -444,7 +486,7 @@ export default function OrdersPage() {
                       <th>Variasi</th>
                       <th>Qty</th>
                       <th>Harga jual</th>
-                      <th>HPP</th>
+                      {canSeeHpp && <th>HPP</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -454,7 +496,9 @@ export default function OrdersPage() {
                         <td>{it.variasi || '—'}</td>
                         <td className="tabular-nums">{it.qty}</td>
                         <td className="tabular-nums">{formatMoney(it.selling_price)}</td>
-                        <td className="tabular-nums">{formatMoney(it.hpp_snapshot)}</td>
+                        {canSeeHpp && (
+                          <td className="tabular-nums">{formatMoney(it.hpp_snapshot)}</td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -465,20 +509,22 @@ export default function OrdersPage() {
               <button type="button" className="btn btn-secondary px-4" onClick={closeDetailModal}>
                 Tutup
               </button>
-              <button
-                type="button"
-                className="btn btn-primary px-4"
-                disabled={!!detailEditLocked}
-                onClick={() => {
-                  if (detailListRowId != null && !detailEditLocked) {
-                    closeDetailModal();
-                    openEditOrder(detailListRowId);
-                  }
-                }}
-              >
-                <Pencil size={16} strokeWidth={2} aria-hidden />
-                Edit pesanan
-              </button>
+              {!isViewer && (
+                <button
+                  type="button"
+                  className="btn btn-primary px-4"
+                  disabled={!!detailEditLocked}
+                  onClick={() => {
+                    if (detailListRowId != null && !detailEditLocked) {
+                      closeDetailModal();
+                      openEditOrder(detailListRowId);
+                    }
+                  }}
+                >
+                  <Pencil size={16} strokeWidth={2} aria-hidden />
+                  Edit pesanan
+                </button>
+              )}
             </div>
           </div>
         )}

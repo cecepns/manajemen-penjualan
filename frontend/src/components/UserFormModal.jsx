@@ -8,6 +8,7 @@ import { selectStyles } from './selectTheme.js';
 const roleOptions = [
   { value: 'karyawan', label: 'Karyawan' },
   { value: 'admin', label: 'Admin (order: pencairan & status selesai/retur; tanpa ubah isi barang)' },
+  { value: 'viewer', label: 'Viewer (lihat dashboard, produk, order & hpp; tanpa ubah data)' },
   { value: 'checker_pengiriman', label: 'Checker pengiriman (hanya menu Kurir gudang)' },
   { value: 'owner', label: 'Owner (akses penuh)' },
 ];

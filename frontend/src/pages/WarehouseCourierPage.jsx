@@ -11,7 +11,7 @@ import {
 import CourierSettingsModal from '../components/CourierSettingsModal.jsx';
 
 export default function WarehouseCourierPage() {
-  const { isOwner, user } = useAuth();
+  const { isOwner, user, isViewer } = useAuth();
   const [code, setCode] = useState('');
   const [lastOk, setLastOk] = useState(null);
   const [lastCourier, setLastCourier] = useState(null);
@@ -41,6 +41,7 @@ export default function WarehouseCourierPage() {
   }
 
   async function submit() {
+    if (isViewer) return;
     const c = code.trim();
     if (!c) return;
     setLastOk(null);
@@ -80,7 +81,7 @@ export default function WarehouseCourierPage() {
     }
   }
 
-  const canManage = isOwner || user?.role === 'admin';
+  const canManage = (isOwner || user?.role === 'admin') && !isViewer;
 
   return (
     <div>
@@ -131,7 +132,8 @@ export default function WarehouseCourierPage() {
             <input
               id="courier-code"
               ref={inputRef}
-              className="w-full text-lg py-3 px-4 font-mono font-bold tracking-wide border-2 border-blue-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 rounded-xl transition"
+              disabled={isViewer}
+              className="w-full text-lg py-3 px-4 font-mono font-bold tracking-wide border-2 border-blue-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 rounded-xl transition disabled:bg-slate-100 disabled:text-slate-400"
               value={code}
               onChange={(e) => setCode(e.target.value)}
               onKeyDown={(e) => {
@@ -140,7 +142,7 @@ export default function WarehouseCourierPage() {
                   void submit();
                 }
               }}
-              placeholder="Arahkan scanner barcode ke sini…"
+              placeholder={isViewer ? 'Role Viewer tidak dapat melakukan scan' : 'Arahkan scanner barcode ke sini…'}
               autoComplete="off"
             />
           </div>
@@ -149,7 +151,8 @@ export default function WarehouseCourierPage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            className="btn btn-primary px-6 py-2.5 font-semibold text-base shadow-lg shadow-blue-600/20"
+            className="btn btn-primary px-6 py-2.5 font-semibold text-base shadow-lg shadow-blue-600/20 disabled:opacity-50"
+            disabled={isViewer || !code.trim()}
             onClick={() => void submit()}
           >
             Tandai Dikirim

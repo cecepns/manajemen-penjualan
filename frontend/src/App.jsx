@@ -36,10 +36,24 @@ function OwnerRoute({ children }) {
   return children;
 }
 
+function NonViewerRoute({ children }) {
+  const { isViewer } = useAuth();
+  if (isViewer) return <Navigate to="/" replace />;
+  return children;
+}
+
+function ExpensesRoute({ children }) {
+  const { isOwner, isAdmin, isViewer } = useAuth();
+  if (!isOwner && !isAdmin && !isViewer) return <Navigate to="/orders" replace />;
+  return children;
+}
+
 function RoleHome() {
-  const { user } = useAuth();
+  const { user, canViewDashboard } = useAuth();
   if (user?.role === 'checker_pengiriman')
     return <Navigate to="/kurir-gudang" replace />;
+  if (!canViewDashboard)
+    return <Navigate to="/orders" replace />;
   return <DashboardPage />;
 }
 
@@ -64,8 +78,22 @@ export default function App() {
         <Route path="stores" element={<StoresPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="kurir-gudang" element={<WarehouseCourierPage />} />
-        <Route path="expenses" element={<ExpensesPage />} />
-        <Route path="status-online" element={<StatusOnlinePage />} />
+        <Route
+          path="expenses"
+          element={
+            <ExpensesRoute>
+              <ExpensesPage />
+            </ExpensesRoute>
+          }
+        />
+        <Route
+          path="status-online"
+          element={
+            <NonViewerRoute>
+              <StatusOnlinePage />
+            </NonViewerRoute>
+          }
+        />
         <Route
           path="activity-log"
           element={

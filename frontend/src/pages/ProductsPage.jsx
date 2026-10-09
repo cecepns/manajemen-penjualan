@@ -32,7 +32,7 @@ function stockCellClass(stock) {
 }
 
 export default function ProductsPage() {
-  const { isOwnerOrAdmin } = useAuth();
+  const { isOwnerOrAdmin, canSeeHpp, isViewer } = useAuth();
   const [searchInput, setSearchInput] = useState('');
   const search = useDebouncedValue(searchInput, 1000);
   const [page, setPage] = useState(1);
@@ -129,10 +129,12 @@ export default function ProductsPage() {
           <Package size={28} strokeWidth={2} className="icon-title" aria-hidden />
           Produk & stok
         </h1>
-        <button type="button" className="btn btn-primary" onClick={openNewProduct}>
-          <Plus size={18} strokeWidth={2} aria-hidden />
-          Produk baru
-        </button>
+        {!isViewer && (
+          <button type="button" className="btn btn-primary" onClick={openNewProduct}>
+            <Plus size={18} strokeWidth={2} aria-hidden />
+            Produk baru
+          </button>
+        )}
       </div>
 
       <div className="card mb-4">
@@ -163,9 +165,9 @@ export default function ProductsPage() {
               <th>Foto</th>
               <th>Nama</th>
               <th>Barcode</th>
-              <th>HPP</th>
+              {canSeeHpp && <th>HPP</th>}
               <th>Stok</th>
-              <th className="w-32">Aksi</th>
+              {!isViewer && <th className="w-32">Aksi</th>}
             </tr>
           </thead>
           <tbody>
@@ -196,32 +198,34 @@ export default function ProductsPage() {
                   </button>
                 </td>
                 <td className="muted">{p.barcode || '—'}</td>
-                <td>{formatMoney(p.hpp)}</td>
+                {canSeeHpp && <td>{formatMoney(p.hpp)}</td>}
                 <td>
                   <span className={stockCellClass(p.stock)}>{Number(p.stock) || 0}</span>
                 </td>
-                <td>
-                  <div className="flex flex-wrap gap-1">
-                    <button
-                      type="button"
-                      className="btn btn-ghost min-h-9 px-2.5 text-xs"
-                      onClick={() => openEditProduct(p.id)}
-                    >
-                      <Pencil size={14} strokeWidth={2} aria-hidden />
-                      Edit
-                    </button>
-                    {isOwnerOrAdmin && (
+                {!isViewer && (
+                  <td>
+                    <div className="flex flex-wrap gap-1">
                       <button
                         type="button"
-                        className="btn btn-danger min-h-9 px-2.5 text-xs"
-                        onClick={() => handleDelete(p.id)}
+                        className="btn btn-ghost min-h-9 px-2.5 text-xs"
+                        onClick={() => openEditProduct(p.id)}
                       >
-                        <Trash2 size={16} strokeWidth={2} aria-hidden />
-                        Hapus
+                        <Pencil size={14} strokeWidth={2} aria-hidden />
+                        Edit
                       </button>
-                    )}
-                  </div>
-                </td>
+                      {isOwnerOrAdmin && (
+                        <button
+                          type="button"
+                          className="btn btn-danger min-h-9 px-2.5 text-xs"
+                          onClick={() => handleDelete(p.id)}
+                        >
+                          <Trash2 size={16} strokeWidth={2} aria-hidden />
+                          Hapus
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

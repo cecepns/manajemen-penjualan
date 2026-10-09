@@ -62,6 +62,9 @@ export function AuthProvider({ children }) {
     const isAdmin = role === 'admin';
     const isKaryawan = role === 'karyawan';
     const isCheckerPengiriman = role === 'checker_pengiriman';
+    const isViewer = role === 'viewer';
+    const canSeeHpp = isOwner || isAdmin || isViewer;
+    const canViewDashboard = isOwner || isViewer;
     return {
       user,
       ready,
@@ -70,7 +73,10 @@ export function AuthProvider({ children }) {
       isAdmin,
       isKaryawan,
       isCheckerPengiriman,
-      /** Owner atau admin (bukan karyawan) — untuk hapus produk, kelola toko, dll. */
+      isViewer,
+      canSeeHpp,
+      canViewDashboard,
+      /** Owner atau admin (bukan karyawan / viewer) — untuk tindakan manajemen */
       isOwnerOrAdmin: isOwner || isAdmin,
       reload: loadMe,
       logout,

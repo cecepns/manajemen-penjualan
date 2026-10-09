@@ -53,7 +53,7 @@ function todayIsoDate() {
 }
 
 export default function StockAuditPage() {
-  const { isOwner } = useAuth();
+  const { isOwner, isViewer, canSeeHpp } = useAuth();
   const [activeTab, setActiveTab] = useState('sessions'); // 'sessions' | 'create'
 
   // ——— State Sesi Audit List ———
@@ -273,18 +273,20 @@ export default function StockAuditPage() {
               <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
             )}
           </button>
-          <button
-            type="button"
-            className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 transition ${
-              activeTab === 'create'
-                ? 'bg-white text-blue-700 shadow-sm font-bold'
-                : 'hover:text-slate-900'
-            }`}
-            onClick={() => setActiveTab('create')}
-          >
-            <Plus size={15} />
-            Buat Sesi Audit Baru
-          </button>
+          {!isViewer && (
+            <button
+              type="button"
+              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 transition ${
+                activeTab === 'create'
+                  ? 'bg-white text-blue-700 shadow-sm font-bold'
+                  : 'hover:text-slate-900'
+              }`}
+              onClick={() => setActiveTab('create')}
+            >
+              <Plus size={15} />
+              Buat Sesi Audit Baru
+            </button>
+          )}
         </div>
       </div>
 
@@ -627,8 +629,8 @@ export default function StockAuditPage() {
                                 {p.barcode}
                               </span>
                             )}
-                            <span>HPP: {formatMoney(p.hpp)}</span>
-                            <span>•</span>
+                            {canSeeHpp && <span>HPP: {formatMoney(p.hpp)}</span>}
+                            {canSeeHpp && <span>•</span>}
                             <span
                               className={`font-semibold ${
                                 p.last_audit_date ? 'text-slate-700' : 'text-amber-700 font-bold'

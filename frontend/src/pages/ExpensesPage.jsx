@@ -34,7 +34,7 @@ const INCOME_CATEGORY_OPTIONS = [
 ];
 
 export default function ExpensesPage() {
-  const { isOwnerOrAdmin } = useAuth();
+  const { isOwnerOrAdmin, isViewer } = useAuth();
   
   // Navigation tab: 'expenses' or 'incomes'
   const [activeTab, setActiveTab] = useState('expenses');
@@ -55,7 +55,7 @@ export default function ExpensesPage() {
   const [saldoMandiri, setSaldoMandiri] = useState(0);
   
   // Summary
-  const [summary, setSummary] = useState({ total: 0, ops: 0, ads: 0, lain: 0 });
+  const [summary, setSummary] = useState({ total: 0, ops: 0, ads: 0, supplier: 0, refund: 0, lain: 0 });
   
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -118,21 +118,7 @@ export default function ExpensesPage() {
         const { data } = await api.get('/api/expenses', { params });
         setRows(data.data || []);
         setTotal(data.total || 0);
-
-        // Fetch stats summary (using large page to sum up filtered records)
-        const sumParams = { ...params, limit: 100000, page: 1 };
-        const { data: allFiltered } = await api.get('/api/expenses', { params: sumParams });
-        const stats = { total: 0, ops: 0, ads: 0, lain: 0 };
-        if (allFiltered?.data) {
-          allFiltered.data.forEach(item => {
-            const amt = Number(item.amount) || 0;
-            stats.total += amt;
-            if (item.category === 'operasional') stats.ops += amt;
-            else if (item.category === 'iklan') stats.ads += amt;
-            else stats.lain += amt;
-          });
-        }
-        setSummary(stats);
+        setSummary(data.summary || { total: 0, ops: 0, ads: 0, supplier: 0, refund: 0, lain: 0 });
       } else {
         if (sourceFilter) params.source = sourceFilter;
         const { data } = await api.get('/api/incomes', { params });
@@ -216,6 +202,10 @@ export default function ExpensesPage() {
     if (modalType === 'expense') {
       if (!formAmount || Number(formAmount) <= 0) {
         alert('Jumlah pengeluaran harus lebih besar dari 0');
+        return;
+      }
+      if (formCategory === 'iklan' && !formStoreId) {
+        alert('Toko terkait wajib dipilih untuk pengeluaran kategori Iklan');
         return;
       }
       const payload = {
@@ -320,11 +310,11 @@ export default function ExpensesPage() {
       const toStr = format(dateTo, 'yyyy-MM-dd');
       
       const { data: expRes } = await api.get('/api/expenses', {
-        params: { date_from: fromStr, date_to: toStr, limit: 100000, page: 1 }
+        params: { date_from: fromStr, date_to: toStr, limit: 100000, page: 1, export: 'true' }
       });
       
       const { data: incRes } = await api.get('/api/incomes', {
-        params: { date_from: fromStr, date_to: toStr, limit: 100000, page: 1 }
+        params: { date_from: fromStr, date_to: toStr, limit: 100000, page: 1, export: 'true' }
       });
 
       const expenseList = (expRes.data || []).map(item => ({
@@ -371,22 +361,24 @@ export default function ExpensesPage() {
           <Wallet size={28} strokeWidth={2} className="icon-title" aria-hidden />
           Keuangan &amp; Kas
         </h1>
-        {isOwnerOrAdmin && (
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn btn-secondary" onClick={handleExport}>
-              <FileDown size={18} strokeWidth={2} aria-hidden />
-              Export Excel
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={handleOpenCreateIncome}>
-              <Plus size={18} strokeWidth={2} aria-hidden />
-              Tambah Pemasukan
-            </button>
-            <button type="button" className="btn btn-primary" onClick={handleOpenCreateExpense}>
-              <Plus size={18} strokeWidth={2} aria-hidden />
-              Tambah Pengeluaran
-            </button>
-          </div>
-        )}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn btn-secondary" onClick={handleExport}>
+            <FileDown size={18} strokeWidth={2} aria-hidden />
+            Export Excel
+          </button>
+          {isOwnerOrAdmin && (
+            <>
+              <button type="button" className="btn btn-secondary" onClick={handleOpenCreateIncome}>
+                <Plus size={18} strokeWidth={2} aria-hidden />
+                Tambah Pemasukan
+              </button>
+              <button type="button" className="btn btn-primary" onClick={handleOpenCreateExpense}>
+                <Plus size={18} strokeWidth={2} aria-hidden />
+                Tambah Pengeluaran
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -441,7 +433,7 @@ export default function ExpensesPage() {
             <Wallet size={20} strokeWidth={2} aria-hidden />
           </div>
           <span className="stat-label">Pengeluaran Lainnya</span>
-          <strong>{formatMoney(summary.lain)}</strong>
+          <strong>{formatMoney((Number(summary.lain) || 0) + (Number(summary.supplier) || 0) + (Number(summary.refund) || 0))}</strong>
         </div>
         <div className="stat col-span-2 md:col-span-1 border-2 border-emerald-100 bg-emerald-50/20">
           <div className="stat-icon bg-emerald-50 text-emerald-600">
@@ -715,10 +707,11 @@ export default function ExpensesPage() {
 
                 {formCategory === 'iklan' && (
                   <div>
-                    <label className="block text-sm font-medium mb-1">Toko Terkait</label>
+                    <label className="block text-sm font-medium mb-1">
+                      Toko Terkait <span className="text-red-500">*</span>
+                    </label>
                     <Select
-                      isClearable
-                      placeholder="Pilih Toko"
+                      placeholder="Pilih Toko (Wajib untuk Iklan)"
                       options={storeOptions}
                       value={storeOptions.find(o => o.value === formStoreId) || null}
                       onChange={o => setFormStoreId(o?.value ?? null)}

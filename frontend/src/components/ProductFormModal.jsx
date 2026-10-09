@@ -14,7 +14,7 @@ const empty = {
 };
 
 export default function ProductFormModal({ open, onClose, productId, onSaved }) {
-  const { isOwnerOrAdmin } = useAuth();
+  const { isOwnerOrAdmin, canSeeHpp } = useAuth();
   const isEdit = productId != null;
   const [form, setForm] = useState(empty);
   const [loading, setLoading] = useState(false);
@@ -155,21 +155,23 @@ export default function ProductFormModal({ open, onClose, productId, onSaved }) 
                 </div>
               )}
             </div>
-            <div>
-              <label>HPP (modal per unit) *</label>
-              <input
-                type="number"
-                min={0}
-                value={form.hpp}
-                onChange={(e) => setForm((f) => ({ ...f, hpp: e.target.value }))}
-                required
-                disabled={isEdit && !isOwnerOrAdmin}
-                readOnly={isEdit && !isOwnerOrAdmin}
-              />
-              {isEdit && !isOwnerOrAdmin && (
-                <p className="muted mt-1 text-xs">HPP hanya dapat diubah oleh admin atau owner.</p>
-              )}
-            </div>
+            {canSeeHpp && (
+              <div>
+                <label>HPP (modal per unit) *</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.hpp}
+                  onChange={(e) => setForm((f) => ({ ...f, hpp: e.target.value }))}
+                  required
+                  disabled={isEdit && !isOwnerOrAdmin}
+                  readOnly={isEdit && !isOwnerOrAdmin}
+                />
+                {isEdit && !isOwnerOrAdmin && (
+                  <p className="muted mt-1 text-xs">HPP hanya dapat diubah oleh admin atau owner.</p>
+                )}
+              </div>
+            )}
             <div>
               <label>Stok awal / koreksi</label>
               <input

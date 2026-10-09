@@ -21,17 +21,17 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useHeartbeat } from '../hooks/useHeartbeat.js';
 
 const links = [
-  { to: '/', label: 'Dashboard', end: true, Icon: LayoutDashboard },
+  { to: '/', label: 'Dashboard', end: true, Icon: LayoutDashboard, ownerOrViewerOnly: true },
   { to: '/orders', label: 'Order', Icon: ShoppingCart },
   { to: '/products', label: 'Produk', Icon: Package },
-  { to: '/stock-in', label: 'Tambah stok masuk', Icon: PackagePlus },
+  { to: '/stock-in', label: 'Tambah stok masuk', Icon: PackagePlus, hideForViewer: true },
   { to: '/stock-audit', label: 'Stok audit', Icon: ClipboardList },
   { to: '/stock-history', label: 'History stok', Icon: History },
   { to: '/stores', label: 'Toko', Icon: Store },
   { to: '/kurir-gudang', label: 'Kurir gudang', Icon: Truck },
-  { to: '/expenses', label: 'Keuangan', ownerOrAdminOnly: true, Icon: Wallet },
+  { to: '/expenses', label: 'Keuangan', ownerOrAdminOrViewerOnly: true, Icon: Wallet },
   { to: '/users', label: 'User', ownerOnly: true, Icon: Users },
-  { to: '/status-online', label: 'Status Online', Icon: Radio, isStatusOnline: true },
+  { to: '/status-online', label: 'Status Online', Icon: Radio, isStatusOnline: true, hideForViewer: true },
   { to: '/activity-log', label: 'Activity Log', ownerOnly: true, Icon: Activity },
 ];
 
@@ -46,12 +46,19 @@ const navLinkDesktop = ({ isActive }) =>
 function SidebarContent({ user, isOwner, onLinkClick, headerLeading, onLogout }) {
   const r = user?.role;
   const isOwnerOrAdmin = isOwner || r === 'admin';
+  const isViewer = r === 'viewer';
+  const isOwnerOrViewer = isOwner || isViewer;
+  const isOwnerOrAdminOrViewer = isOwner || r === 'admin' || isViewer;
+
   const visible =
     r === 'checker_pengiriman'
       ? links.filter((l) => l.to === '/kurir-gudang' || l.to === '/status-online')
       : links.filter((l) => {
           if (l.ownerOnly) return isOwner;
+          if (l.ownerOrViewerOnly) return isOwnerOrViewer;
           if (l.ownerOrAdminOnly) return isOwnerOrAdmin;
+          if (l.ownerOrAdminOrViewerOnly) return isOwnerOrAdminOrViewer;
+          if (l.hideForViewer && isViewer) return false;
           return true;
         });
 
